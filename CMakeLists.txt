@@ -25,6 +25,9 @@ add_executable(test test/main.cpp src/i18n_manager.cpp)
 target_include_directories(test PRIVATE src generated ${NLOHMANN_DIR})
 target_link_libraries(test PRIVATE crypto)
 
+add_executable(i18n_crypto_cli tools/encrypt_i18n.c)
+target_link_libraries(i18n_crypto_cli PRIVATE crypto)
+
 # 构建期 i18n key diff 检查：确保各语言 key 集合一致
 set(I18N_REFERENCE_FILE ${CMAKE_SOURCE_DIR}/i18n/en_US.json)
 

@@ -1,18 +1,34 @@
 name: CI
-on: [push]
+on:
+  push:
+  pull_request:
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Setup Python
         uses: actions/setup-python@v4
+        with:
+          python-version: "3.x"
       - name: i18n key diff check (strict)
         run: |
           python tools/i18n_diff_check.py i18n/en_US.json --strict --github-annotations
+
       - name: Build
         run: |
-          mkdir build
-          cd build
-          cmake ..
-          make
+          cmake -S . -B build
+          cmake --build build --config Release
+
+      - name: Run i18n sample
+        run: |
+          ./build/test
+
+      - name: Verify SM4-GCM JSON/TRS roundtrip
+        run: |
+          KEY=00112233445566778899AABBCCDDEEFF
+          AAD=i18n:v1
+          ./build/i18n_crypto_cli enc -i i18n/zh_CN.json -o build/zh_CN.trs -k ${KEY} --aad ${AAD}
+          ./build/i18n_crypto_cli dec -i build/zh_CN.trs -o build/zh_CN.dec.json -k ${KEY} --aad ${AAD}
+          cmp -s i18n/zh_CN.json build/zh_CN.dec.json
