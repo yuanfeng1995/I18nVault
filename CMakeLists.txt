@@ -25,6 +25,16 @@ add_executable(test test/main.cpp src/i18n_manager.cpp)
 target_include_directories(test PRIVATE src generated ${NLOHMANN_DIR})
 target_link_libraries(test PRIVATE crypto)
 
+# 构建期 i18n key diff 检查：确保各语言 key 集合一致
+set(I18N_REFERENCE_FILE ${CMAKE_SOURCE_DIR}/i18n/en_US.json)
+
+add_custom_target(i18n_diff_check ALL
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/i18n_diff_check.py
+        ${I18N_REFERENCE_FILE}
+    DEPENDS ${I18N_REFERENCE_FILE}
+        ${CMAKE_SOURCE_DIR}/tools/i18n_diff_check.py
+)
+
 # 自动生成 header
 add_custom_command(
     OUTPUT ${CMAKE_SOURCE_DIR}/generated/i18n_keys.h
@@ -36,3 +46,4 @@ add_custom_command(
 )
 add_custom_target(i18n_keys ALL DEPENDS ${CMAKE_SOURCE_DIR}/generated/i18n_keys.h)
 add_dependencies(test i18n_keys)
+add_dependencies(test i18n_diff_check)
