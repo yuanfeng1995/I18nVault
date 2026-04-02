@@ -1,9 +1,202 @@
 #include "i18n_manager.h"
 
+#include "crypto/sm4_gcm.h"
 #include "nlohmann/json.hpp"
 
+#include <algorithm>
+#include <cstdint>
+#include <cstring>
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <vector>
+
+namespace
+{
+constexpr const char* kTrsMagic = "TRS1";
+constexpr uint8_t     kTrsVersion = 1;
+constexpr uint8_t     kTrsReserved = 0;
+
+bool ends_with(const std::string& value, const std::string& suffix)
+{
+    if (value.size() < suffix.size())
+        return false;
+    return value.compare(value.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+int hex_nibble(char c)
+{
+    if (c >= '0' && c <= '9')
+        return c - '0';
+    if (c >= 'a' && c <= 'f')
+        return 10 + (c - 'a');
+    if (c >= 'A' && c <= 'F')
+        return 10 + (c - 'A');
+    return -1;
+}
+
+bool parse_hex_key(const char* hex, uint8_t out[SM4_GCM_KEY_SIZE])
+{
+    if (!hex)
+        return false;
+
+    std::string key_hex(hex);
+    if (key_hex.size() != SM4_GCM_KEY_SIZE * 2)
+        return false;
+
+    for (size_t i = 0; i < SM4_GCM_KEY_SIZE; ++i)
+    {
+        int hi = hex_nibble(key_hex[2 * i]);
+        int lo = hex_nibble(key_hex[2 * i + 1]);
+        if (hi < 0 || lo < 0)
+            return false;
+        out[i] = static_cast<uint8_t>((hi << 4) | lo);
+    }
+    return true;
+}
+
+bool parse_hex_key_to_vector(const std::string& hex, std::vector<uint8_t>& out)
+{
+    if (hex.size() != SM4_GCM_KEY_SIZE * 2)
+        return false;
+
+    out.resize(SM4_GCM_KEY_SIZE);
+    for (size_t i = 0; i < SM4_GCM_KEY_SIZE; ++i)
+    {
+        int hi = hex_nibble(hex[2 * i]);
+        int lo = hex_nibble(hex[2 * i + 1]);
+        if (hi < 0 || lo < 0)
+            return false;
+        out[i] = static_cast<uint8_t>((hi << 4) | lo);
+    }
+    return true;
+}
+
+bool read_file_binary(const std::string& path, std::vector<uint8_t>& out)
+{
+    std::ifstream f(path, std::ios::binary);
+    if (!f.is_open())
+        return false;
+
+    f.seekg(0, std::ios::end);
+    auto size = f.tellg();
+    if (size < 0)
+        return false;
+
+    f.seekg(0, std::ios::beg);
+    out.resize(static_cast<size_t>(size));
+    if (!out.empty())
+        f.read(reinterpret_cast<char*>(out.data()), static_cast<std::streamsize>(out.size()));
+
+    return f.good() || f.eof();
+}
+
+uint32_t read_u32_le(const uint8_t* p)
+{
+    return static_cast<uint32_t>(p[0]) | (static_cast<uint32_t>(p[1]) << 8)
+           | (static_cast<uint32_t>(p[2]) << 16) | (static_cast<uint32_t>(p[3]) << 24);
+}
+
+bool decrypt_trs_to_json_text(const std::string& path, const uint8_t key[SM4_GCM_KEY_SIZE], const std::string& aad,
+                              std::string& json_text)
+{
+    std::vector<uint8_t> blob;
+    if (!read_file_binary(path, blob))
+    {
+        std::cerr << "Failed to read trs file: " << path << std::endl;
+        return false;
+    }
+
+    constexpr size_t kHeaderMin = 4 + 1 + 1 + 1 + 1 + 4;
+    if (blob.size() < kHeaderMin)
+    {
+        std::cerr << "Invalid trs file, too short: " << path << std::endl;
+        return false;
+    }
+
+    size_t off = 0;
+    if (std::memcmp(blob.data(), kTrsMagic, 4) != 0)
+    {
+        std::cerr << "Invalid trs magic: " << path << std::endl;
+        return false;
+    }
+    off += 4;
+
+    uint8_t version = blob[off++];
+    uint8_t iv_len = blob[off++];
+    uint8_t tag_len = blob[off++];
+    uint8_t reserved = blob[off++];
+    uint32_t ct_len = read_u32_le(blob.data() + off);
+    off += 4;
+
+    if (version != kTrsVersion || reserved != kTrsReserved || iv_len != SM4_GCM_IV_SIZE || tag_len != SM4_GCM_TAG_SIZE)
+    {
+        std::cerr << "Unsupported trs header: " << path << std::endl;
+        return false;
+    }
+
+    if (off + iv_len + tag_len + ct_len != blob.size())
+    {
+        std::cerr << "Invalid trs length fields: " << path << std::endl;
+        return false;
+    }
+
+    const uint8_t* iv = blob.data() + off;
+    off += iv_len;
+    const uint8_t* tag = blob.data() + off;
+    off += tag_len;
+    const uint8_t* ct = blob.data() + off;
+
+    std::vector<uint8_t> pt(ct_len);
+    if (sm4_gcm_decrypt(key, iv, iv_len, reinterpret_cast<const uint8_t*>(aad.data()), aad.size(), ct, ct_len,
+                        pt.data(), tag)
+        != 0)
+    {
+        std::cerr << "Failed to decrypt trs file (auth verify failed): " << path << std::endl;
+        return false;
+    }
+
+    json_text.assign(reinterpret_cast<const char*>(pt.data()), pt.size());
+    return true;
+}
+
+std::vector<std::string> collect_required_keys()
+{
+    // Extract all generated enum keys through i18n_keys_string() with a bounded scan.
+    std::vector<std::string> keys;
+    for (uint16_t i = 0; i < 4096; ++i)
+    {
+        const char* k = i18n_keys_string(static_cast<I18nKey>(i));
+        if (k && k[0] != '\0')
+            keys.emplace_back(k);
+    }
+
+    std::sort(keys.begin(), keys.end());
+    keys.erase(std::unique(keys.begin(), keys.end()), keys.end());
+    return keys;
+}
+} // namespace
+
+bool I18nManager::setTrsCryptoConfig(const TrsCryptoConfig& config)
+{
+    std::vector<uint8_t> key;
+    if (!parse_hex_key_to_vector(config.key_hex, key))
+        return false;
+
+    {
+        std::unique_lock lock(mu_);
+        trs_key_ = std::move(key);
+        trs_aad_ = config.aad;
+    }
+    return true;
+}
+
+void I18nManager::clearTrsCryptoConfig()
+{
+    std::unique_lock lock(mu_);
+    trs_key_.reset();
+    trs_aad_.clear();
+}
 
 I18nManager& I18nManager::instance()
 {
@@ -34,30 +227,85 @@ static void flatten(const nlohmann::json& j, const std::string& prefix,
         {
             out[key] = it->get<std::string>();
         }
+        else
+        {
+            std::cerr << "Skip non-string key: " << key << std::endl;
+        }
     }
 }
 
 bool I18nManager::reload(const std::string& path)
 {
-    std::ifstream f(path);
-    if (!f.is_open())
-        return false;
     nlohmann::json j;
-    f >> j;
+    try
+    {
+        if (ends_with(path, ".trs"))
+        {
+            std::vector<uint8_t> key;
+            std::string          aad;
+            {
+                std::shared_lock lock(mu_);
+                if (trs_key_.has_value())
+                {
+                    key = *trs_key_;
+                    aad = trs_aad_;
+                }
+            }
+
+            // Backward-compatible fallback to environment variables.
+            if (key.empty())
+            {
+                const char* key_hex = std::getenv("I18N_TRS_KEY_HEX");
+                if (!key_hex)
+                    key_hex = std::getenv("I18N_SM4_KEY_HEX");
+
+                uint8_t env_key[SM4_GCM_KEY_SIZE] = {};
+                if (!parse_hex_key(key_hex, env_key))
+                {
+                    std::cerr << "TRS key is not configured. Call setTrsCryptoConfig() or set I18N_TRS_KEY_HEX."
+                              << std::endl;
+                    return false;
+                }
+
+                key.assign(env_key, env_key + SM4_GCM_KEY_SIZE);
+                const char* aad_env = std::getenv("I18N_TRS_AAD");
+                aad = aad_env ? aad_env : "";
+            }
+
+            std::string json_text;
+            if (!decrypt_trs_to_json_text(path, key.data(), aad, json_text))
+                return false;
+            j = nlohmann::json::parse(json_text);
+        }
+        else
+        {
+            std::ifstream f(path);
+            if (!f.is_open())
+                return false;
+            f >> j;
+        }
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Failed to parse i18n file " << path << ": " << e.what() << std::endl;
+        return false;
+    }
 
     std::unordered_map<std::string, std::string> new_data;
     flatten(j, "", new_data);
 
+    static const std::vector<std::string> required_keys = collect_required_keys();
+    for (const auto& key : required_keys)
+    {
+        if (new_data.find(key) == new_data.end())
+        {
+            std::cerr << "Missing required key: " << key << std::endl;
+            return false;
+        }
+    }
+
     {
         std::unique_lock lock(mu_);
-        for (auto& [k, _] : data_)
-        {
-            if (new_data.find(k) == new_data.end())
-            {
-                std::cerr << "Missing key: " << k << std::endl;
-                return false;
-            }
-        }
         data_.swap(new_data);
         version_++;
     }

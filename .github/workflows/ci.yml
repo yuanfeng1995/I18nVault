@@ -2,10 +2,24 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            bin_dir: build
+            exe_ext: ""
+          - os: macos-latest
+            bin_dir: build
+            exe_ext: ""
+          - os: windows-latest
+            bin_dir: build/Release
+            exe_ext: ".exe"
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - name: Setup Python
@@ -17,18 +31,38 @@ jobs:
           python tools/i18n_diff_check.py i18n/en_US.json --strict --github-annotations
 
       - name: Build
+        shell: bash
         run: |
           cmake -S . -B build
           cmake --build build --config Release
 
-      - name: Run i18n sample
+      - name: Run CTest smoke
+        shell: bash
         run: |
-          ./build/test
+          ctest --test-dir build -C Release --output-on-failure
+
+      - name: Verify build-generated TRS artifacts
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          for path in [Path("i18n/en_US.trs"), Path("i18n/zh_CN.trs")]:
+              if not path.exists():
+                  raise SystemExit(f"missing artifact: {path}")
+          print("[OK] trs artifacts exist")
+          PY
 
       - name: Verify SM4-GCM JSON/TRS roundtrip
+        shell: bash
         run: |
           KEY=00112233445566778899AABBCCDDEEFF
           AAD=i18n:v1
-          ./build/i18n_crypto_cli enc -i i18n/zh_CN.json -o build/zh_CN.trs -k ${KEY} --aad ${AAD}
-          ./build/i18n_crypto_cli dec -i build/zh_CN.trs -o build/zh_CN.dec.json -k ${KEY} --aad ${AAD}
-          cmp -s i18n/zh_CN.json build/zh_CN.dec.json
+          "${{ matrix.bin_dir }}/i18n_crypto_cli${{ matrix.exe_ext }}" dec -i i18n/zh_CN.trs -o build/zh_CN.dec.json -k ${KEY} --aad ${AAD}
+          python - <<'PY'
+          from pathlib import Path
+          src = Path("i18n/zh_CN.json").read_bytes()
+          dec = Path("build/zh_CN.dec.json").read_bytes()
+          if src != dec:
+              raise SystemExit("roundtrip mismatch: i18n/zh_CN.json vs build/zh_CN.dec.json")
+          print("[OK] roundtrip verified")
+          PY
