@@ -56,6 +56,9 @@ def generate_header(json_file: str, output_file: str):
     lines = []
     lines.append("// This file is auto-generated. Do not modify manually.\n")
     lines.append("#pragma once\n\n")
+    lines.append("namespace I18nVault\n")
+    lines.append("{\n")
+    lines.append("\n")
 
     # 生成 enum（Allman 风格，4 空格缩进）
     lines.append("enum class I18nKey : unsigned short\n")
@@ -79,6 +82,8 @@ def generate_header(json_file: str, output_file: str):
 
     # 生成 key 数量常量
     lines.append(f"inline constexpr unsigned short I18N_KEY_COUNT = {len(normalized_keys)};\n")
+    lines.append("\n")  
+    lines.append("}  // namespace I18nVault\n")
 
     # 写入文件
     output_path = Path(output_file)

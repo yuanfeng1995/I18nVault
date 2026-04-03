@@ -1,6 +1,7 @@
 #pragma once
 #include "i18n_keys.h"
 
+#include <initializer_list>
 #include <memory>
 #include <string>
 
@@ -26,6 +27,9 @@ public:
     /// Translate an enum key to its localized string.
     std::string translate(I18nKey key);
 
+    /// Translate with positional arguments: {0}, {1}, ... are replaced.
+    std::string translateFmt(I18nKey key, std::initializer_list<std::string> args);
+
     /// Set runtime TRS decryption parameters.
     bool setTrsCryptoConfig(const TrsCryptoConfig& config);
 
@@ -47,3 +51,7 @@ private:
 
 /// Convenience macro: I18nVault_TR(I18nKey::XXX) => translated string.
 #define I18nVault_TR(key) (::I18nVault::I18nManager::instance().translate(key))
+
+/// Format macro: I18nVault_TR_FMT(I18nKey::XXX, "a", "b") replaces {0},{1},...
+#define I18nVault_TR_FMT(key, ...) \
+    (::I18nVault::I18nManager::instance().translateFmt(key, {__VA_ARGS__}))

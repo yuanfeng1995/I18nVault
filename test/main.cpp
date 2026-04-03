@@ -1,7 +1,7 @@
-#include "i18n_keys.h"
-#include "i18n_manager.h"
 #include "crypto/hex_utils.h"
 #include "crypto/sm4_gcm.h"
+#include "i18n_keys.h"
+#include "i18n_manager.h"
 #include "nlohmann/json.hpp"
 
 #include <cstdint>
@@ -13,10 +13,10 @@
 
 namespace
 {
-constexpr const char* kTmpDir = "build/tmp";
-constexpr const char* kTmpTrs = "build/tmp/zh_CN.test.trs";
+constexpr const char* kTmpDir         = "build/tmp";
+constexpr const char* kTmpTrs         = "build/tmp/zh_CN.test.trs";
 constexpr const char* kTmpMissingJson = "build/tmp/missing.json";
-constexpr const char* kZhJsonPath = "i18n/zh_CN.json";
+constexpr const char* kZhJsonPath     = "i18n/zh_CN.json";
 
 bool parse_hex_key(const std::string& hex, uint8_t out[SM4_GCM_KEY_SIZE])
 {
@@ -33,16 +33,14 @@ bool write_trs_file(const std::string& json_path, const std::string& trs_path, c
     std::vector<uint8_t> pt((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     std::vector<uint8_t> ct(pt.size());
     uint8_t              key[SM4_GCM_KEY_SIZE] = {};
-    uint8_t              iv[SM4_GCM_IV_SIZE] = {0x10, 0x32, 0x54, 0x76, 0x98, 0xBA,
-                                   0xDC, 0xFE, 0x12, 0x34, 0x56, 0x78};
+    uint8_t              iv[SM4_GCM_IV_SIZE] = {0x10, 0x32, 0x54, 0x76, 0x98, 0xBA, 0xDC, 0xFE, 0x12, 0x34, 0x56, 0x78};
     uint8_t              tag[SM4_GCM_TAG_SIZE] = {};
 
     if (!parse_hex_key(key_hex, key))
         return false;
 
     if (sm4_gcm_encrypt(key, iv, sizeof(iv), reinterpret_cast<const uint8_t*>(aad.data()), aad.size(), pt.data(),
-                        pt.size(), ct.data(), tag)
-        != 0)
+                        pt.size(), ct.data(), tag) != 0)
     {
         return false;
     }
@@ -56,7 +54,7 @@ bool write_trs_file(const std::string& json_path, const std::string& trs_path, c
     };
     out.write(reinterpret_cast<const char*>(header), sizeof(header));
 
-    uint32_t ct_len = static_cast<uint32_t>(ct.size());
+    uint32_t ct_len    = static_cast<uint32_t>(ct.size());
     uint8_t  len_le[4] = {
         static_cast<uint8_t>(ct_len & 0xFF),
         static_cast<uint8_t>((ct_len >> 8) & 0xFF),
@@ -69,7 +67,7 @@ bool write_trs_file(const std::string& json_path, const std::string& trs_path, c
     out.write(reinterpret_cast<const char*>(ct.data()), static_cast<std::streamsize>(ct.size()));
     return static_cast<bool>(out);
 }
-} // namespace
+}  // namespace
 
 int main()
 {
@@ -83,16 +81,31 @@ int main()
         std::cerr << "[FAIL] reload en_US.json failed" << std::endl;
         return 1;
     }
-    if (mgr.translate(I18nKey::LOGIN_BUTTON) != "Login")
+    if (mgr.translate(I18nVault::I18nKey::LOGIN_BUTTON) != "Login")
     {
         std::cerr << "[FAIL] LOGIN_BUTTON translation mismatch for en_US" << std::endl;
         return 1;
     }
 
     // Verify I18nVault_TR() macro
-    if (I18nVault_TR(I18nKey::LOGIN_BUTTON) != "Login")
+    if (I18nVault_TR(I18nVault::I18nKey::LOGIN_BUTTON) != "Login")
     {
         std::cerr << "[FAIL] I18nVault_TR() macro mismatch" << std::endl;
+        return 1;
+    }
+
+    // Verify translateFmt with {0} placeholder
+    if (mgr.translateFmt(I18nVault::I18nKey::WELCOME_FMT, {"Alice"}) != "Welcome, Alice!")
+    {
+        std::cerr << "[FAIL] translateFmt WELCOME_FMT mismatch" << std::endl;
+        return 1;
+    }
+
+    // Verify I18nVault_TR_FMT macro
+    if (I18nVault_TR_FMT(I18nVault::I18nKey::DIALOG_DELETE_FMT, "photo.jpg") !=
+        "Delete photo.jpg? This action cannot be undone.")
+    {
+        std::cerr << "[FAIL] I18nVault_TR_FMT DIALOG_DELETE_FMT mismatch" << std::endl;
         return 1;
     }
 
@@ -107,7 +120,7 @@ int main()
     }
 
     const std::string key_hex = "00112233445566778899AABBCCDDEEFF";
-    const std::string aad = "i18n:v1";
+    const std::string aad     = "i18n:v1";
     if (!write_trs_file(kZhJsonPath, kTmpTrs, key_hex, aad))
     {
         std::cerr << "[FAIL] failed to generate test trs file" << std::endl;
@@ -130,7 +143,7 @@ int main()
         std::ifstream zh_in(kZhJsonPath);
         zh_in >> zh_json;
     }
-    if (mgr.translate(I18nKey::LOGIN_BUTTON) != zh_json["LOGIN_BUTTON"].get<std::string>())
+    if (mgr.translate(I18nVault::I18nKey::LOGIN_BUTTON) != zh_json["LOGIN_BUTTON"].get<std::string>())
     {
         std::cerr << "[FAIL] LOGIN_BUTTON translation mismatch after trs reload" << std::endl;
         return 1;

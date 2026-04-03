@@ -15,6 +15,10 @@
 #include <unordered_map>
 #include <vector>
 
+using I18nVault::I18nKey;
+using I18nVault::i18n_keys_string;
+using I18nVault::I18N_KEY_COUNT;
+
 namespace
 {
 constexpr const char* kTrsMagic = "TRS1";
@@ -184,6 +188,24 @@ std::string I18nManager::translate(I18nKey key)
     if (it != pImpl_->data.end())
         return it->second;
     return "";
+}
+
+std::string I18nManager::translateFmt(I18nKey key, std::initializer_list<std::string> args)
+{
+    std::string result = translate(key);
+    size_t idx = 0;
+    for (const auto& arg : args)
+    {
+        std::string placeholder = "{" + std::to_string(idx) + "}";
+        size_t pos = 0;
+        while ((pos = result.find(placeholder, pos)) != std::string::npos)
+        {
+            result.replace(pos, placeholder.size(), arg);
+            pos += arg.size();
+        }
+        ++idx;
+    }
+    return result;
 }
 
 static void flatten(const nlohmann::json& j, const std::string& prefix,
