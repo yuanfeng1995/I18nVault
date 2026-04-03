@@ -11,13 +11,13 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            bin_dir: build
+            cli_dir: build/tools
             exe_ext: ""
           - os: macos-latest
-            bin_dir: build
+            cli_dir: build/tools
             exe_ext: ""
           - os: windows-latest
-            bin_dir: build/Release
+            cli_dir: build/tools/Release
             exe_ext: ".exe"
     runs-on: ${{ matrix.os }}
     steps:
@@ -57,7 +57,7 @@ jobs:
         run: |
           KEY=00112233445566778899AABBCCDDEEFF
           AAD=i18n:v1
-          "${{ matrix.bin_dir }}/i18n_crypto_cli${{ matrix.exe_ext }}" dec -i i18n/zh_CN.trs -o build/zh_CN.dec.json -k ${KEY} --aad ${AAD}
+          "${{ matrix.cli_dir }}/i18n_crypto_cli${{ matrix.exe_ext }}" dec -i i18n/zh_CN.trs -o build/zh_CN.dec.json -k ${KEY} --aad ${AAD}
           python - <<'PY'
           from pathlib import Path
           src = Path("i18n/zh_CN.json").read_bytes()
@@ -66,3 +66,34 @@ jobs:
               raise SystemExit("roundtrip mismatch: i18n/zh_CN.json vs build/zh_CN.dec.json")
           print("[OK] roundtrip verified")
           PY
+
+      - name: Verify cmake install
+        shell: bash
+        run: |
+          cmake --install build --config Release --prefix build/install
+          python - <<'PY'
+          from pathlib import Path
+          required = [
+              "include/I18nVault/i18n_manager.h",
+              "include/I18nVault/i18n_keys.h",
+              "lib/cmake/I18nVault/I18nVaultConfig.cmake",
+              "lib/cmake/I18nVault/I18nVaultTargets.cmake",
+          ]
+          prefix = Path("build/install")
+          missing = [f for f in required if not (prefix / f).exists()]
+          if missing:
+              raise SystemExit("missing install files:\n" + "\n".join(missing))
+          print("[OK] install tree verified")
+          PY
+
+      - name: Package (CPack)
+        shell: bash
+        run: |
+          cd build
+          cpack -C Release
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: I18nVault-${{ matrix.os }}
+          path: build/I18nVault-*.*
