@@ -19,7 +19,7 @@ if(NOT EXISTS "${NLOHMANN_DIR}/nlohmann/json.hpp")
 endif()
 
 # 加密静态库
-add_library(crypto STATIC src/crypto/sm4.c src/crypto/gcm.c src/crypto/sm4_gcm.c)
+add_library(crypto STATIC src/crypto/sm4.c src/crypto/gcm.c src/crypto/sm4_gcm.c src/crypto/hex_utils.c)
 target_include_directories(crypto PUBLIC src/crypto)
 
 add_library(I18nVaultCore STATIC src/i18n_manager.cpp)

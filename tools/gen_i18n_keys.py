@@ -33,7 +33,7 @@ def flatten_json(data: dict, prefix: str = "") -> dict:
         elif isinstance(v, str):
             result[flat_key] = v
         else:
-            print(f"⚠️  跳过非字符串值: {flat_key} = {v!r}")
+            print(f"[WARN] skip non-string value: {flat_key} = {v!r}")
     return result
 
 def generate_header(json_file: str, output_file: str):
@@ -49,7 +49,7 @@ def generate_header(json_file: str, output_file: str):
     for k in flat.keys():
         nk = normalize_key(k)
         if nk in normalized_keys:
-            print(f"❌ 枚举值冲突: {k} 与 {normalized_keys[nk]} 都映射为 {nk}")
+            print(f"[ERROR] enum conflict: {k} and {normalized_keys[nk]} both map to {nk}")
             sys.exit(1)
         normalized_keys[nk] = k
 
@@ -72,7 +72,10 @@ def generate_header(json_file: str, output_file: str):
     lines.append("    default:\n")
     lines.append("      return \"\";\n")
     lines.append("  }\n")
-    lines.append("}\n")
+    lines.append("}\n\n")
+
+    # 生成 key 数量常量
+    lines.append(f"inline constexpr unsigned short I18N_KEY_COUNT = {len(normalized_keys)};\n")
 
     # 写入文件
     output_path = Path(output_file)

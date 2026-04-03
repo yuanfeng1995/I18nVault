@@ -1,5 +1,6 @@
 #include "i18n_keys.h"
 #include "i18n_manager.h"
+#include "crypto/hex_utils.h"
 #include "crypto/sm4_gcm.h"
 #include "nlohmann/json.hpp"
 
@@ -19,28 +20,7 @@ constexpr const char* kZhJsonPath = "i18n/zh_CN.json";
 
 bool parse_hex_key(const std::string& hex, uint8_t out[SM4_GCM_KEY_SIZE])
 {
-    if (hex.size() != SM4_GCM_KEY_SIZE * 2)
-        return false;
-
-    auto nibble = [](char c) -> int {
-        if (c >= '0' && c <= '9')
-            return c - '0';
-        if (c >= 'a' && c <= 'f')
-            return 10 + (c - 'a');
-        if (c >= 'A' && c <= 'F')
-            return 10 + (c - 'A');
-        return -1;
-    };
-
-    for (size_t i = 0; i < SM4_GCM_KEY_SIZE; ++i)
-    {
-        int hi = nibble(hex[2 * i]);
-        int lo = nibble(hex[2 * i + 1]);
-        if (hi < 0 || lo < 0)
-            return false;
-        out[i] = static_cast<uint8_t>((hi << 4) | lo);
-    }
-    return true;
+    return hex_parse(hex.c_str(), out, SM4_GCM_KEY_SIZE) == 0;
 }
 
 bool write_trs_file(const std::string& json_path, const std::string& trs_path, const std::string& key_hex,

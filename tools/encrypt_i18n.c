@@ -1,4 +1,5 @@
 // SM4-GCM i18n converter: JSON <-> TRS
+#include "hex_utils.h"
 #include "sm4_gcm.h"
 
 #include <stdint.h>
@@ -32,33 +33,7 @@ static void print_usage(const char* exe)
 			exe, exe);
 }
 
-static int hex_nibble(char c)
-{
-	if (c >= '0' && c <= '9')
-		return c - '0';
-	if (c >= 'a' && c <= 'f')
-		return 10 + (c - 'a');
-	if (c >= 'A' && c <= 'F')
-		return 10 + (c - 'A');
-	return -1;
-}
 
-static int parse_hex_exact(const char* hex, uint8_t* out, size_t out_len)
-{
-	size_t hex_len = strlen(hex);
-	if (hex_len != out_len * 2)
-		return -1;
-
-	for (size_t i = 0; i < out_len; ++i)
-	{
-		int hi = hex_nibble(hex[2 * i]);
-		int lo = hex_nibble(hex[2 * i + 1]);
-		if (hi < 0 || lo < 0)
-			return -1;
-		out[i] = (uint8_t)((hi << 4) | lo);
-	}
-	return 0;
-}
 
 static int read_file_all(const char* path, uint8_t** data, size_t* len)
 {
@@ -190,7 +165,7 @@ static int do_encrypt(const CliOptions* opts)
 	uint8_t* ct = NULL;
 	size_t pt_len = 0;
 
-	if (parse_hex_exact(opts->key_hex, key, sizeof(key)) != 0)
+	if (hex_parse(opts->key_hex, key, sizeof(key)) != 0)
 	{
 		fprintf(stderr, "[ERROR] invalid key hex (must be 32 hex chars)\n");
 		return 1;
@@ -198,7 +173,7 @@ static int do_encrypt(const CliOptions* opts)
 
 	if (opts->iv_hex)
 	{
-		if (parse_hex_exact(opts->iv_hex, iv, sizeof(iv)) != 0)
+		if (hex_parse(opts->iv_hex, iv, sizeof(iv)) != 0)
 		{
 			fprintf(stderr, "[ERROR] invalid iv hex (must be 24 hex chars)\n");
 			return 1;
@@ -267,7 +242,7 @@ static int do_decrypt(const CliOptions* opts)
 	uint8_t* pt = NULL;
 	size_t in_len = 0;
 
-	if (parse_hex_exact(opts->key_hex, key, sizeof(key)) != 0)
+	if (hex_parse(opts->key_hex, key, sizeof(key)) != 0)
 	{
 		fprintf(stderr, "[ERROR] invalid key hex (must be 32 hex chars)\n");
 		return 1;

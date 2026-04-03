@@ -81,7 +81,7 @@ def discover_targets(base_file):
     base_path = Path(base_file).resolve()
     i18n_dir = base_path.parent
     all_json = sorted(p.resolve() for p in i18n_dir.glob("*.json"))
-    return [str(p) for p in all_json if p != base_path]
+    return [str(p) for p in all_json if p != base_path and not p.name.endswith(".missing.template.json")]
 
 
 def write_missing_template(base, target_file, missing_keys):

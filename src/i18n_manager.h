@@ -33,5 +33,4 @@ private:
     std::unordered_map<std::string, std::string> data_;
     std::optional<std::vector<uint8_t>>          trs_key_;
     std::string                                  trs_aad_;
-    int                                          version_ = 0;
 };

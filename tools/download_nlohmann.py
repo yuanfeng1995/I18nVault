@@ -11,11 +11,16 @@
 
 import sys
 import os
+import hashlib
 from pathlib import Path
 from urllib.request import urlopen, Request
 from urllib.error import URLError
 
 DEFAULT_VERSION = "v3.11.3"
+
+EXPECTED_SHA256 = {
+    "v3.11.3": "853b2eb3bf7632c949f4a2dd6fb8a629c5ff25cc0059d29c7d21915dc719487f",
+}
 
 SOURCES = [
     ("Gitee",  "https://gitee.com/nicethink/json/raw/{ver}/single_include/nlohmann/json.hpp"),
@@ -40,6 +45,12 @@ def download(output_dir: str, version: str):
             req = Request(url, headers={"User-Agent": "i18n_core_trs/cmake"})
             with urlopen(req, timeout=TIMEOUT) as resp:
                 data = resp.read()
+            expected = EXPECTED_SHA256.get(version)
+            if expected:
+                actual = hashlib.sha256(data).hexdigest()
+                if actual != expected:
+                    print(f"[ERROR] SHA256 mismatch for {name}: expected {expected}, got {actual}")
+                    continue
             dest.write_bytes(data)
             print(f"[OK]   Downloaded {len(data)} bytes -> {dest}")
             return

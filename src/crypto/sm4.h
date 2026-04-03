@@ -29,17 +29,6 @@ extern "C"
     // Decrypt a single 16-byte block in-place
     void sm4_decrypt_block(const sm4_ctx* ctx, const uint8_t in[SM4_BLOCK_SIZE], uint8_t out[SM4_BLOCK_SIZE]);
 
-    // CBC mode encrypt. iv is updated in-place. out must have room for
-    // padded_len (next multiple of 16). Returns bytes written.
-    // PKCS#7 padding is appended automatically.
-    size_t sm4_cbc_encrypt(const sm4_ctx* ctx, uint8_t iv[SM4_BLOCK_SIZE], const uint8_t* in, size_t in_len,
-                           uint8_t* out);
-
-    // CBC mode decrypt. iv is updated in-place. Returns plaintext length
-    // after removing PKCS#7 padding, or 0 on padding error.
-    size_t sm4_cbc_decrypt(const sm4_ctx* ctx, uint8_t iv[SM4_BLOCK_SIZE], const uint8_t* in, size_t in_len,
-                           uint8_t* out);
-
 #ifdef __cplusplus
 }
 #endif

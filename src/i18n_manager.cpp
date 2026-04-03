@@ -1,5 +1,6 @@
 #include "i18n_manager.h"
 
+#include "crypto/hex_utils.h"
 #include "crypto/sm4_gcm.h"
 #include "nlohmann/json.hpp"
 
@@ -24,53 +25,7 @@ bool ends_with(const std::string& value, const std::string& suffix)
     return value.compare(value.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
 
-int hex_nibble(char c)
-{
-    if (c >= '0' && c <= '9')
-        return c - '0';
-    if (c >= 'a' && c <= 'f')
-        return 10 + (c - 'a');
-    if (c >= 'A' && c <= 'F')
-        return 10 + (c - 'A');
-    return -1;
-}
 
-bool parse_hex_key(const char* hex, uint8_t out[SM4_GCM_KEY_SIZE])
-{
-    if (!hex)
-        return false;
-
-    std::string key_hex(hex);
-    if (key_hex.size() != SM4_GCM_KEY_SIZE * 2)
-        return false;
-
-    for (size_t i = 0; i < SM4_GCM_KEY_SIZE; ++i)
-    {
-        int hi = hex_nibble(key_hex[2 * i]);
-        int lo = hex_nibble(key_hex[2 * i + 1]);
-        if (hi < 0 || lo < 0)
-            return false;
-        out[i] = static_cast<uint8_t>((hi << 4) | lo);
-    }
-    return true;
-}
-
-bool parse_hex_key_to_vector(const std::string& hex, std::vector<uint8_t>& out)
-{
-    if (hex.size() != SM4_GCM_KEY_SIZE * 2)
-        return false;
-
-    out.resize(SM4_GCM_KEY_SIZE);
-    for (size_t i = 0; i < SM4_GCM_KEY_SIZE; ++i)
-    {
-        int hi = hex_nibble(hex[2 * i]);
-        int lo = hex_nibble(hex[2 * i + 1]);
-        if (hi < 0 || lo < 0)
-            return false;
-        out[i] = static_cast<uint8_t>((hi << 4) | lo);
-    }
-    return true;
-}
 
 bool read_file_binary(const std::string& path, std::vector<uint8_t>& out)
 {
@@ -162,9 +117,8 @@ bool decrypt_trs_to_json_text(const std::string& path, const uint8_t key[SM4_GCM
 
 std::vector<std::string> collect_required_keys()
 {
-    // Extract all generated enum keys through i18n_keys_string() with a bounded scan.
     std::vector<std::string> keys;
-    for (uint16_t i = 0; i < 4096; ++i)
+    for (uint16_t i = 0; i < I18N_KEY_COUNT; ++i)
     {
         const char* k = i18n_keys_string(static_cast<I18nKey>(i));
         if (k && k[0] != '\0')
@@ -179,8 +133,11 @@ std::vector<std::string> collect_required_keys()
 
 bool I18nManager::setTrsCryptoConfig(const TrsCryptoConfig& config)
 {
-    std::vector<uint8_t> key;
-    if (!parse_hex_key_to_vector(config.key_hex, key))
+    if (config.key_hex.size() != SM4_GCM_KEY_SIZE * 2)
+        return false;
+
+    std::vector<uint8_t> key(SM4_GCM_KEY_SIZE);
+    if (hex_parse(config.key_hex.c_str(), key.data(), SM4_GCM_KEY_SIZE) != 0)
         return false;
 
     {
@@ -260,7 +217,7 @@ bool I18nManager::reload(const std::string& path)
                     key_hex = std::getenv("I18N_SM4_KEY_HEX");
 
                 uint8_t env_key[SM4_GCM_KEY_SIZE] = {};
-                if (!parse_hex_key(key_hex, env_key))
+                if (hex_parse(key_hex, env_key, SM4_GCM_KEY_SIZE) != 0)
                 {
                     std::cerr << "TRS key is not configured. Call setTrsCryptoConfig() or set I18N_TRS_KEY_HEX."
                               << std::endl;
@@ -307,7 +264,6 @@ bool I18nManager::reload(const std::string& path)
     {
         std::unique_lock lock(mu_);
         data_.swap(new_data);
-        version_++;
     }
     return true;
 }
