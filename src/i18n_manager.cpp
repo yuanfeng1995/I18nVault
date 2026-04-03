@@ -6,23 +6,24 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <cstring>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <iostream>
+#include <mutex>
 #include <optional>
 #include <shared_mutex>
 #include <unordered_map>
 #include <vector>
 
-using I18nVault::I18nKey;
-using I18nVault::i18n_keys_string;
 using I18nVault::I18N_KEY_COUNT;
+using I18nVault::i18n_keys_string;
+using I18nVault::I18nKey;
 
 namespace
 {
-constexpr const char* kTrsMagic = "TRS1";
-constexpr uint8_t     kTrsVersion = 1;
+constexpr const char* kTrsMagic    = "TRS1";
+constexpr uint8_t     kTrsVersion  = 1;
 constexpr uint8_t     kTrsReserved = 0;
 
 bool ends_with(const std::string& value, const std::string& suffix)
@@ -31,8 +32,6 @@ bool ends_with(const std::string& value, const std::string& suffix)
         return false;
     return value.compare(value.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
-
-
 
 bool read_file_binary(const std::string& path, std::vector<uint8_t>& out)
 {
@@ -55,8 +54,8 @@ bool read_file_binary(const std::string& path, std::vector<uint8_t>& out)
 
 uint32_t read_u32_le(const uint8_t* p)
 {
-    return static_cast<uint32_t>(p[0]) | (static_cast<uint32_t>(p[1]) << 8)
-           | (static_cast<uint32_t>(p[2]) << 16) | (static_cast<uint32_t>(p[3]) << 24);
+    return static_cast<uint32_t>(p[0]) | (static_cast<uint32_t>(p[1]) << 8) | (static_cast<uint32_t>(p[2]) << 16) |
+           (static_cast<uint32_t>(p[3]) << 24);
 }
 
 bool decrypt_trs_to_json_text(const std::string& path, const uint8_t key[SM4_GCM_KEY_SIZE], const std::string& aad,
@@ -84,11 +83,11 @@ bool decrypt_trs_to_json_text(const std::string& path, const uint8_t key[SM4_GCM
     }
     off += 4;
 
-    uint8_t version = blob[off++];
-    uint8_t iv_len = blob[off++];
-    uint8_t tag_len = blob[off++];
-    uint8_t reserved = blob[off++];
-    uint32_t ct_len = read_u32_le(blob.data() + off);
+    uint8_t  version  = blob[off++];
+    uint8_t  iv_len   = blob[off++];
+    uint8_t  tag_len  = blob[off++];
+    uint8_t  reserved = blob[off++];
+    uint32_t ct_len   = read_u32_le(blob.data() + off);
     off += 4;
 
     if (version != kTrsVersion || reserved != kTrsReserved || iv_len != SM4_GCM_IV_SIZE || tag_len != SM4_GCM_TAG_SIZE)
@@ -111,8 +110,7 @@ bool decrypt_trs_to_json_text(const std::string& path, const uint8_t key[SM4_GCM
 
     std::vector<uint8_t> pt(ct_len);
     if (sm4_gcm_decrypt(key, iv, iv_len, reinterpret_cast<const uint8_t*>(aad.data()), aad.size(), ct, ct_len,
-                        pt.data(), tag)
-        != 0)
+                        pt.data(), tag) != 0)
     {
         std::cerr << "Failed to decrypt trs file (auth verify failed): " << path << std::endl;
         return false;
@@ -136,9 +134,10 @@ std::vector<std::string> collect_required_keys()
     keys.erase(std::unique(keys.begin(), keys.end()), keys.end());
     return keys;
 }
-} // anonymous namespace
+}  // anonymous namespace
 
-namespace I18nVault {
+namespace I18nVault
+{
 
 struct I18nManager::Impl
 {
@@ -148,7 +147,7 @@ struct I18nManager::Impl
     std::string                                  trs_aad;
 };
 
-I18nManager::I18nManager()  : pImpl_(std::make_unique<Impl>()) {}
+I18nManager::I18nManager() : pImpl_(std::make_unique<Impl>()) {}
 I18nManager::~I18nManager() = default;
 
 bool I18nManager::setTrsCryptoConfig(const TrsCryptoConfig& config)
@@ -193,11 +192,11 @@ std::string I18nManager::translate(I18nKey key)
 std::string I18nManager::translateFmt(I18nKey key, std::initializer_list<std::string> args)
 {
     std::string result = translate(key);
-    size_t idx = 0;
+    size_t      idx    = 0;
     for (const auto& arg : args)
     {
         std::string placeholder = "{" + std::to_string(idx) + "}";
-        size_t pos = 0;
+        size_t      pos         = 0;
         while ((pos = result.find(placeholder, pos)) != std::string::npos)
         {
             result.replace(pos, placeholder.size(), arg);
@@ -264,7 +263,7 @@ bool I18nManager::reload(const std::string& path)
 
                 key.assign(env_key, env_key + SM4_GCM_KEY_SIZE);
                 const char* aad_env = std::getenv("I18N_TRS_AAD");
-                aad = aad_env ? aad_env : "";
+                aad                 = aad_env ? aad_env : "";
             }
 
             std::string json_text;
@@ -306,4 +305,4 @@ bool I18nManager::reload(const std::string& path)
     return true;
 }
 
-} // namespace I18nVault
+}  // namespace I18nVault
