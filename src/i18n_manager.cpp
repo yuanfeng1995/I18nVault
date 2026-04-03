@@ -10,6 +10,9 @@
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <optional>
+#include <shared_mutex>
+#include <unordered_map>
 #include <vector>
 
 namespace
@@ -129,7 +132,20 @@ std::vector<std::string> collect_required_keys()
     keys.erase(std::unique(keys.begin(), keys.end()), keys.end());
     return keys;
 }
-} // namespace
+} // anonymous namespace
+
+namespace I18nVault {
+
+struct I18nManager::Impl
+{
+    mutable std::shared_mutex                    mu;
+    std::unordered_map<std::string, std::string> data;
+    std::optional<std::vector<uint8_t>>          trs_key;
+    std::string                                  trs_aad;
+};
+
+I18nManager::I18nManager()  : pImpl_(std::make_unique<Impl>()) {}
+I18nManager::~I18nManager() = default;
 
 bool I18nManager::setTrsCryptoConfig(const TrsCryptoConfig& config)
 {
@@ -141,18 +157,18 @@ bool I18nManager::setTrsCryptoConfig(const TrsCryptoConfig& config)
         return false;
 
     {
-        std::unique_lock lock(mu_);
-        trs_key_ = std::move(key);
-        trs_aad_ = config.aad;
+        std::unique_lock lock(pImpl_->mu);
+        pImpl_->trs_key = std::move(key);
+        pImpl_->trs_aad = config.aad;
     }
     return true;
 }
 
 void I18nManager::clearTrsCryptoConfig()
 {
-    std::unique_lock lock(mu_);
-    trs_key_.reset();
-    trs_aad_.clear();
+    std::unique_lock lock(pImpl_->mu);
+    pImpl_->trs_key.reset();
+    pImpl_->trs_aad.clear();
 }
 
 I18nManager& I18nManager::instance()
@@ -163,9 +179,9 @@ I18nManager& I18nManager::instance()
 
 std::string I18nManager::translate(I18nKey key)
 {
-    std::shared_lock lock(mu_);
-    auto             it = data_.find(i18n_keys_string(key));
-    if (it != data_.end())
+    std::shared_lock lock(pImpl_->mu);
+    auto             it = pImpl_->data.find(i18n_keys_string(key));
+    if (it != pImpl_->data.end())
         return it->second;
     return "";
 }
@@ -201,11 +217,11 @@ bool I18nManager::reload(const std::string& path)
             std::vector<uint8_t> key;
             std::string          aad;
             {
-                std::shared_lock lock(mu_);
-                if (trs_key_.has_value())
+                std::shared_lock lock(pImpl_->mu);
+                if (pImpl_->trs_key.has_value())
                 {
-                    key = *trs_key_;
-                    aad = trs_aad_;
+                    key = *pImpl_->trs_key;
+                    aad = pImpl_->trs_aad;
                 }
             }
 
@@ -262,8 +278,10 @@ bool I18nManager::reload(const std::string& path)
     }
 
     {
-        std::unique_lock lock(mu_);
-        data_.swap(new_data);
+        std::unique_lock lock(pImpl_->mu);
+        pImpl_->data.swap(new_data);
     }
     return true;
 }
+
+} // namespace I18nVault

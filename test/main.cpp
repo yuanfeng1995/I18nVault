@@ -76,7 +76,7 @@ int main()
     namespace fs = std::filesystem;
     fs::create_directories(kTmpDir);
 
-    auto& mgr = I18nManager::instance();
+    auto& mgr = I18nVault::I18nManager::instance();
 
     if (!mgr.reload("i18n/en_US.json"))
     {
@@ -86,6 +86,13 @@ int main()
     if (mgr.translate(I18nKey::LOGIN_BUTTON) != "Login")
     {
         std::cerr << "[FAIL] LOGIN_BUTTON translation mismatch for en_US" << std::endl;
+        return 1;
+    }
+
+    // Verify I18nVault_TR() macro
+    if (I18nVault_TR(I18nKey::LOGIN_BUTTON) != "Login")
+    {
+        std::cerr << "[FAIL] I18nVault_TR() macro mismatch" << std::endl;
         return 1;
     }
 

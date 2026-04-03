@@ -57,21 +57,24 @@ def generate_header(json_file: str, output_file: str):
     lines.append("// This file is auto-generated. Do not modify manually.\n")
     lines.append("#pragma once\n\n")
 
-    # 生成 enum
-    lines.append("enum class I18nKey : unsigned short {\n")
+    # 生成 enum（Allman 风格，4 空格缩进）
+    lines.append("enum class I18nKey : unsigned short\n")
+    lines.append("{\n")
     for nk in sorted(normalized_keys.keys()):
-        lines.append(f"  {nk},\n")
+        lines.append(f"    {nk},\n")
     lines.append("};\n\n")
 
     # 生成 to_string 映射函数
-    lines.append("inline constexpr const char *i18n_keys_string(I18nKey key) {\n")
-    lines.append("  switch (key) {\n")
+    lines.append("inline constexpr const char* i18n_keys_string(I18nKey key)\n")
+    lines.append("{\n")
+    lines.append("    switch (key)\n")
+    lines.append("    {\n")
     for nk, original in sorted(normalized_keys.items()):
-        lines.append(f"    case I18nKey::{nk}:\n")
-        lines.append(f"      return \"{original}\";\n")
-    lines.append("    default:\n")
-    lines.append("      return \"\";\n")
-    lines.append("  }\n")
+        lines.append(f"        case I18nKey::{nk}:\n")
+        lines.append(f"            return \"{original}\";\n")
+    lines.append("        default:\n")
+    lines.append("            return \"\";\n")
+    lines.append("    }\n")
     lines.append("}\n\n")
 
     # 生成 key 数量常量
