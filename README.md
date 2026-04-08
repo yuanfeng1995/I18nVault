@@ -170,7 +170,8 @@ tools/
 <prefix>/
   include/I18nVault/
     i18n_manager.h              # 公共头文件
-    i18n_keys.h                 # 枚举定义
+  share/I18nVault/tools/
+    gen_i18n_keys.py            # key 枚举生成脚本
   lib/
     I18nVaultCore.lib           # 核心库
     I18nVaultCrypto.lib         # 加密库（内部依赖，无公共头文件）

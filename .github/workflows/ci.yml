@@ -75,7 +75,7 @@ jobs:
           from pathlib import Path
           required = [
               "include/I18nVault/i18n_manager.h",
-              "include/I18nVault/i18n_keys.h",
+              "share/I18nVault/tools/gen_i18n_keys.py",
               "lib/cmake/I18nVault/I18nVaultConfig.cmake",
               "lib/cmake/I18nVault/I18nVaultTargets.cmake",
           ]

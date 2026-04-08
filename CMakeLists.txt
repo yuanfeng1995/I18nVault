@@ -26,7 +26,9 @@ add_subdirectory(test)
 # ---- Install rules ----
 # Public headers
 install(FILES src/i18n_manager.h          DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/I18nVault)
-install(FILES generated/i18n_keys.h       DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/I18nVault)
+
+# Key generation script (consumers generate i18n_keys.h from their own JSON)
+install(FILES tools/gen_i18n_keys.py      DESTINATION ${CMAKE_INSTALL_DATADIR}/I18nVault/tools)
 
 # Libraries
 install(TARGETS I18nVaultCore I18nVaultCrypto
