@@ -13,12 +13,15 @@ jobs:
           - os: ubuntu-latest
             cli_dir: build/bin
             exe_ext: ""
+            shared_lib_glob: "lib/libI18nVaultCore.so"
           - os: macos-latest
             cli_dir: build/bin
             exe_ext: ""
+            shared_lib_glob: "lib/libI18nVaultCore.dylib"
           - os: windows-latest
             cli_dir: build/bin/Release
             exe_ext: ".exe"
+            shared_lib_glob: "bin/I18nVaultCore.dll"
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -30,25 +33,19 @@ jobs:
         run: |
           python tools/i18n_diff_check.py i18n/en_US.json --strict --github-annotations
 
-      - name: Build
+      # ── Static library build ──
+      - name: Build (static)
         shell: bash
         run: |
-          cmake -S . -B build
+          cmake -S . -B build -DBUILD_SHARED_LIBS=OFF
           cmake --build build --config Release
 
-      - name: Run CTest smoke
+      - name: Test (static)
         shell: bash
         run: |
           ctest --test-dir build -C Release --output-on-failure
 
-      - name: Build & test shared library
-        shell: bash
-        run: |
-          cmake -S . -B build_shared -DBUILD_SHARED_LIBS=ON
-          cmake --build build_shared --config Release
-          ctest --test-dir build_shared -C Release --output-on-failure
-
-      - name: Verify build-generated TRS artifacts
+      - name: Verify TRS artifacts
         shell: bash
         run: |
           python - <<'PY'
@@ -59,7 +56,7 @@ jobs:
           print("[OK] trs artifacts exist")
           PY
 
-      - name: Verify SM4-GCM JSON/TRS roundtrip
+      - name: Verify SM4-GCM roundtrip
         shell: bash
         run: |
           KEY=00112233445566778899AABBCCDDEEFF
@@ -70,16 +67,18 @@ jobs:
           src = Path("i18n/zh_CN.json").read_bytes()
           dec = Path("build/zh_CN.dec.json").read_bytes()
           if src != dec:
-              raise SystemExit("roundtrip mismatch: i18n/zh_CN.json vs build/zh_CN.dec.json")
+              raise SystemExit("roundtrip mismatch")
           print("[OK] roundtrip verified")
           PY
 
-      - name: Verify cmake install
+      - name: Install check (static)
         shell: bash
         run: |
           cmake --install build --config Release --prefix build/install
           python - <<'PY'
+          import glob, sys
           from pathlib import Path
+          prefix = Path("build/install")
           required = [
               "include/I18nVault/i18n_manager.h",
               "include/I18nVault/i18n_vault_export.h",
@@ -87,21 +86,139 @@ jobs:
               "lib/cmake/I18nVault/I18nVaultConfig.cmake",
               "lib/cmake/I18nVault/I18nVaultTargets.cmake",
           ]
-          prefix = Path("build/install")
           missing = [f for f in required if not (prefix / f).exists()]
           if missing:
-              raise SystemExit("missing install files:\n" + "\n".join(missing))
-          print("[OK] install tree verified")
+              sys.exit("missing install files:\n" + "\n".join(missing))
+          # Static build must NOT contain shared libs
+          shared_glob = "${{ matrix.shared_lib_glob }}"
+          found = glob.glob(str(prefix / shared_glob))
+          if found:
+              sys.exit(f"static install should not contain shared lib: {found}")
+          print("[OK] static install tree verified")
           PY
 
-      - name: Package (CPack)
+      - name: Package (static)
         shell: bash
         run: |
-          cd build
-          cpack -C Release
+          cd build && cpack -C Release
+          cd .. && mkdir -p I18nVault-static-pkg && mv build/I18nVault-*.* I18nVault-static-pkg/
+        # move to a temp dir so shared pkg doesn't collide
 
-      - name: Upload package
+      - name: Verify package contents (static)
+        shell: bash
+        run: |
+          python - <<'PY'
+          import zipfile, tarfile, glob, sys
+          from pathlib import Path
+          pkgs = glob.glob("I18nVault-static-pkg/I18nVault-*.*")
+          if not pkgs:
+              sys.exit("no static package found")
+          pkg = pkgs[0]
+          if pkg.endswith(".zip"):
+              names = zipfile.ZipFile(pkg).namelist()
+          else:
+              names = tarfile.open(pkg).getnames()
+          # Must contain cmake config and headers
+          has_header  = any("i18n_manager.h" in n for n in names)
+          has_export  = any("i18n_vault_export.h" in n for n in names)
+          has_cmake   = any("I18nVaultConfig.cmake" in n for n in names)
+          has_cli     = any("i18n_crypto_cli" in n for n in names)
+          # Must NOT contain shared lib
+          has_dll     = any(n.endswith((".dll", ".so", ".dylib")) for n in names)
+          errors = []
+          if not has_header:  errors.append("missing i18n_manager.h")
+          if not has_export:  errors.append("missing i18n_vault_export.h")
+          if not has_cmake:   errors.append("missing I18nVaultConfig.cmake")
+          if not has_cli:     errors.append("missing i18n_crypto_cli")
+          if has_dll:         errors.append("static package contains shared library")
+          if errors:
+              sys.exit("static package errors:\n" + "\n".join(errors))
+          print(f"[OK] static package verified: {pkg} ({len(names)} entries)")
+          PY
+
+      # ── Shared library build ──
+      - name: Build (shared)
+        shell: bash
+        run: |
+          cmake -S . -B build_shared -DBUILD_SHARED_LIBS=ON
+          cmake --build build_shared --config Release
+
+      - name: Test (shared)
+        shell: bash
+        run: |
+          ctest --test-dir build_shared -C Release --output-on-failure
+
+      - name: Install check (shared)
+        shell: bash
+        run: |
+          cmake --install build_shared --config Release --prefix build_shared/install
+          python - <<'PY'
+          import glob, sys
+          from pathlib import Path
+          prefix = Path("build_shared/install")
+          required = [
+              "include/I18nVault/i18n_manager.h",
+              "include/I18nVault/i18n_vault_export.h",
+              "share/I18nVault/tools/gen_i18n_keys.py",
+              "lib/cmake/I18nVault/I18nVaultConfig.cmake",
+              "lib/cmake/I18nVault/I18nVaultTargets.cmake",
+          ]
+          missing = [f for f in required if not (prefix / f).exists()]
+          if missing:
+              sys.exit("missing install files:\n" + "\n".join(missing))
+          # Shared build MUST contain shared lib
+          shared_glob = "${{ matrix.shared_lib_glob }}"
+          found = glob.glob(str(prefix / shared_glob))
+          if not found:
+              sys.exit(f"shared install missing shared lib: {shared_glob}")
+          print(f"[OK] shared install tree verified (shared lib: {found})")
+          PY
+
+      - name: Package (shared)
+        shell: bash
+        run: |
+          cd build_shared && cpack -C Release
+          cd .. && mkdir -p I18nVault-shared-pkg && mv build_shared/I18nVault-*.* I18nVault-shared-pkg/
+
+      - name: Verify package contents (shared)
+        shell: bash
+        run: |
+          python - <<'PY'
+          import zipfile, tarfile, glob, sys
+          from pathlib import Path
+          pkgs = glob.glob("I18nVault-shared-pkg/I18nVault-*.*")
+          if not pkgs:
+              sys.exit("no shared package found")
+          pkg = pkgs[0]
+          if pkg.endswith(".zip"):
+              names = zipfile.ZipFile(pkg).namelist()
+          else:
+              names = tarfile.open(pkg).getnames()
+          has_header  = any("i18n_manager.h" in n for n in names)
+          has_export  = any("i18n_vault_export.h" in n for n in names)
+          has_cmake   = any("I18nVaultConfig.cmake" in n for n in names)
+          has_cli     = any("i18n_crypto_cli" in n for n in names)
+          has_shared  = any(n.endswith((".dll", ".so", ".dylib")) for n in names)
+          errors = []
+          if not has_header:  errors.append("missing i18n_manager.h")
+          if not has_export:  errors.append("missing i18n_vault_export.h")
+          if not has_cmake:   errors.append("missing I18nVaultConfig.cmake")
+          if not has_cli:     errors.append("missing i18n_crypto_cli")
+          if not has_shared:  errors.append("shared package missing .dll/.so/.dylib")
+          if errors:
+              sys.exit("shared package errors:\n" + "\n".join(errors))
+          print(f"[OK] shared package verified: {pkg} ({len(names)} entries)")
+          PY
+
+      # ── Upload both packages ──
+      - name: Upload static package
         uses: actions/upload-artifact@v4
         with:
-          name: I18nVault-${{ matrix.os }}
-          path: build/I18nVault-*.*
+          name: I18nVault-static-${{ matrix.os }}
+          path: I18nVault-static-pkg/I18nVault-*.*
+
+      - name: Upload shared package
+        uses: actions/upload-artifact@v4
+        with:
+          name: I18nVault-shared-${{ matrix.os }}
+          path: I18nVault-shared-pkg/I18nVault-*.*
