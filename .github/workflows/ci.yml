@@ -110,9 +110,10 @@ jobs:
           python - <<'PY'
           import zipfile, tarfile, glob, sys
           from pathlib import Path
-          pkgs = glob.glob("I18nVault-static-pkg/I18nVault-*.*")
+          pkgs = [p for p in glob.glob("I18nVault-static-pkg/I18nVault-*.*")
+                  if p.endswith((".zip", ".tar.gz", ".tgz"))]
           if not pkgs:
-              sys.exit("no static package found")
+              sys.exit("no static package found (.zip/.tar.gz/.tgz)")
           pkg = pkgs[0]
           if pkg.endswith(".zip"):
               names = zipfile.ZipFile(pkg).namelist()
@@ -186,9 +187,10 @@ jobs:
           python - <<'PY'
           import zipfile, tarfile, glob, sys
           from pathlib import Path
-          pkgs = glob.glob("I18nVault-shared-pkg/I18nVault-*.*")
+          pkgs = [p for p in glob.glob("I18nVault-shared-pkg/I18nVault-*.*")
+                  if p.endswith((".zip", ".tar.gz", ".tgz"))]
           if not pkgs:
-              sys.exit("no shared package found")
+              sys.exit("no shared package found (.zip/.tar.gz/.tgz)")
           pkg = pkgs[0]
           if pkg.endswith(".zip"):
               names = zipfile.ZipFile(pkg).namelist()
@@ -214,13 +216,21 @@ jobs:
       - name: Rename packages
         shell: bash
         run: |
+          rename_pkg() {
+            local src="$1" dest_prefix="$2"
+            local base="$(basename "$src")"
+            # Extract compound extension (.tar.gz, .zip, .tgz, .deb)
+            case "$base" in
+              *.tar.gz) ext="tar.gz" ;;
+              *)        ext="${base##*.}" ;;
+            esac
+            mv "$src" "$(dirname "$src")/${dest_prefix}.${ext}"
+          }
           for f in I18nVault-static-pkg/I18nVault-*.*; do
-            ext="${f##*.}"
-            mv "$f" "I18nVault-static-pkg/I18nVault-static-${{ matrix.os }}.${ext}"
+            rename_pkg "$f" "I18nVault-static-${{ matrix.os }}"
           done
           for f in I18nVault-shared-pkg/I18nVault-*.*; do
-            ext="${f##*.}"
-            mv "$f" "I18nVault-shared-pkg/I18nVault-shared-${{ matrix.os }}.${ext}"
+            rename_pkg "$f" "I18nVault-shared-${{ matrix.os }}"
           done
 
       # ── Upload both packages ──
