@@ -125,7 +125,7 @@ void example_runtime_compatibility()
     std::cout << "=== Example 6: Backward Compatibility ===" << std::endl;
     
     // Old API still works for dynamic scenarios where you need runtime selection
-    std::string old_style = I18nVault_TR(LOGIN_BUTTON);
+    std::string old_style = I18nVault_TR(I18nKey::LOGIN_BUTTON);
     std::cout << "Old style macro: " << old_style << std::endl;
     
     // Can also use I18nManager directly

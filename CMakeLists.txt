@@ -3,6 +3,13 @@ cmake_minimum_required(VERSION 3.15)
 project(I18nVault VERSION 1.0.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_C_STANDARD 11)
+
+# Enable conformant preprocessor on MSVC for __VA_OPT__ support
+if(MSVC)
+    string(APPEND CMAKE_C_FLAGS   " /Zc:preprocessor")
+    string(APPEND CMAKE_CXX_FLAGS " /Zc:preprocessor")
+endif()
+
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 include(CTest)
 include(GNUInstallDirs)
@@ -32,6 +39,7 @@ message(STATUS "i18n_keys.h generation: using gen_i18n_keys_constexpr.py (compil
 add_subdirectory(tools)
 add_subdirectory(src)
 add_subdirectory(test)
+add_subdirectory(examples)
 
 # ---- Install rules ----
 # Public headers

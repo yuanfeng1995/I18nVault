@@ -2,19 +2,19 @@
 
 # I18nVault
 
-轻量级 C++ 国际化库，支持明文 JSON 与 SM4-GCM 加密 TRS 双格式加载。
+轻量级 C++17 国际化库，支持 **编译期 i18n**（零运行时开销）和 **运行时热更新**。
 
 ## 特性
 
-- 运行时快速查词（枚举 key → 本地化字符串）
-- 格式化翻译，支持 `{0}` `{1}` 占位符替换
-- 支持明文 JSON 与加密 TRS 两种加载格式
-- SM4-GCM 认证加密，防篡改
-- 构建期自动校验多语言 key 一致性
-- 构建期自动生成 TRS 产物与枚举头文件
-- pImpl 隔离私有实现，公共头文件干净
-- CMake install + CPack 打包，支持 `find_package(I18nVault)`
-- 跨平台：Windows / macOS / Linux
+- **编译期 i18n**：`constexpr` 翻译通过 `i18n<Key_X, Lang_Y>()` — 零运行时开销
+- **强类型**：每个 key 是唯一的 struct 类型 — 编译期拼写错误检测
+- **不定长格式化**：`i18n_fmt()` — 编译期 key 查找 + 运行时 `{0}` `{1}` 替换
+- **运行时热更新**：`watchFile()` — 文件监听，修改后自动重载
+- **双格式**：明文 JSON 与 SM4-GCM 加密 TRS
+- **构建期代码生成**：Python 脚本从 JSON 自动生成 `i18n_keys.h`
+- **Diff 校验**：构建期自动校验多语言 key 一致性
+- **CMake install + CPack 打包**，支持 `find_package(I18nVault)`
+- **跨平台**：Windows / macOS / Linux
 
 ## 快速开始
 
@@ -74,49 +74,73 @@ target_link_libraries(your_target PRIVATE I18nVaultCore)
 
 ## 使用示例
 
-### 基本翻译
+### 编译期 i18n（推荐 — 零运行时开销）
 
 ```cpp
 #include "i18n_manager.h"
+using namespace I18nVault;
 
-// 获取单例
+// 模板调用 — constexpr，零开销
+constexpr auto text = i18n<Key_LOGIN_BUTTON, Lang_en_US>();
+// => "Login"
+
+// 宏写法
+constexpr auto menu = I18N_CT_SELECT(MENU_FILE, zh_CN);
+// => "文件"
+
+// 默认语言（en_US）
+constexpr auto help = I18N_CT_DEFAULT(MENU_HELP);
+// => "Help"
+```
+
+### 编译期 Key + 运行时格式化
+
+```cpp
+// 不定长参数 — key 编译期解析, 仅 {0} 替换在运行时执行
+auto msg = I18N_CT_FMT(WELCOME_FMT, en_US, "Alice");
+// => "Welcome, Alice!"
+
+auto msg2 = I18N_CT_FMT(DIALOG_DELETE_FMT, zh_CN, filename);
+// => "删除 photo.jpg？此操作无法撤销。"
+
+// 函数调用风格
+auto msg3 = i18n_fmt(i18n<Key_WELCOME_FMT, Lang_en_US>(), user, count);
+```
+
+### 运行时 i18n（向后兼容）
+
+```cpp
 auto& mgr = I18nVault::I18nManager::instance();
-
-// 加载 JSON 语言文件
 mgr.reload("i18n/en_US.json");
 
-// 使用宏翻译
 std::string text = I18nVault_TR(I18nVault::I18nKey::LOGIN_BUTTON);
 // => "Login"
 
-// 或直接调用方法
-std::string text2 = mgr.translate(I18nVault::I18nKey::MENU_FILE);
-// => "File"
-```
-
-### 格式化翻译
-
-JSON 中使用 `{0}` `{1}` 等占位符：
-
-```json
-{
-  "WELCOME_FMT": "Welcome, {0}!",
-  "dialog": {
-    "delete_fmt": "Delete {0}? This action cannot be undone."
-  }
-}
-```
-
-```cpp
-// 使用宏（推荐）
+// 格式化
 std::string msg = I18nVault_TR(I18nVault::I18nKey::WELCOME_FMT, "Alice");
 // => "Welcome, Alice!"
 
-std::string msg2 = I18nVault_TR(I18nVault::I18nKey::DIALOG_DELETE_FMT, "photo.jpg");
-// => "Delete photo.jpg? This action cannot be undone."
+// 强类型调用
+auto text2 = mgr.translate<Key_LOGIN_BUTTON>();
+```
 
-// 或直接调用方法
-std::string msg3 = mgr.translate(I18nVault::I18nKey::WELCOME_FMT, {"Alice"});
+### 运行时热更新
+
+```cpp
+auto& mgr = I18nVault::I18nManager::instance();
+mgr.reload("i18n/zh_CN.json");
+
+// 注册热更新回调（可选）
+mgr.setReloadCallback([](bool ok, const std::string& path) {
+    std::cout << (ok ? "OK" : "FAIL") << ": " << path << "\n";
+});
+
+// 启动文件监听（默认 1000ms，或自定义间隔）
+mgr.watchFile("i18n/zh_CN.json", 500);
+
+// ... 外部修改 zh_CN.json → 自动重载 ...
+
+mgr.stopWatching();  // 或析构时自动停止
 ```
 
 ### 加载加密 TRS 文件
@@ -143,34 +167,35 @@ mgr.clearTrsCryptoConfig();
 ## 项目结构
 
 ```
-CMakeLists.txt                  # 顶层：项目设置 + install + CPack
+CMakeLists.txt                          # 顶层：项目设置 + install + CPack
 cmake/
-  I18nVaultConfig.cmake.in      # find_package() 模板
+  I18nVaultConfig.cmake.in              # find_package() 模板
 src/
-  CMakeLists.txt                # I18nVaultCore 库（静态/动态）
-  i18n_manager.h                # 公共头文件（pImpl）
-  i18n_manager.cpp              # 实现
-  crypto/
-    CMakeLists.txt              # SM4-GCM 加密源文件（编译进 Core）
-    sm4.c / sm4.h               # SM4 分组加密
-    gcm.c / gcm.h               # GCM 模式
-    sm4_gcm.c / sm4_gcm.h       # SM4-GCM 一体化接口
-    hex_utils.c / hex_utils.h   # Hex 解析工具
-generated/
-  i18n_keys.h                   # 自动生成的枚举与映射函数
+  CMakeLists.txt                        # I18nVaultCore 库（静态/动态）
+  i18n_manager.h                        # 公共头文件：编译期 + 运行时 API
+  i18n_manager.cpp                      # 实现（热更新、TRS 解密）
+  crypto/                               # SM4-GCM 加密源文件
+generated/  (构建输出)
+  i18n_keys.h                           # 自动生成：Key_* 结构体、Lang_* 标签、i18n<> 模板
 i18n/
-  en_US.json                    # 英文语言文件（基准）
-  zh_CN.json                    # 中文语言文件
-  *.trs                         # 构建期生成的加密文件
+  en_US.json                            # 英文语言文件（基准）
+  zh_CN.json                            # 中文语言文件
+  *.trs                                 # 构建期生成的加密文件
 test/
-  CMakeLists.txt                # 测试
-  main.cpp                      # 回归测试
+  CMakeLists.txt                        # 测试目标
+  main.cpp                              # 33 项测试：CT、FMT、运行时、TRS、热更新
+examples/
+  CMakeLists.txt                        # 示例目标（可选：-DI18NVAULT_BUILD_EXAMPLES=OFF）
+  i18n_demo.cpp                         # 简洁功能演示
+  compile_time_i18n_example.cpp         # 详细编译期示例
 tools/
-  CMakeLists.txt                # CLI 工具 + 构建期任务
-  gen_i18n_keys.py              # 生成 i18n_keys.h
-  i18n_diff_check.py            # 多语言 key 一致性校验
-  gen_trs_files.py              # 批量生成 TRS
-  encrypt_i18n.c                # 加解密 CLI
+  gen_i18n_keys_constexpr.py            # 生成编译期 i18n_keys.h
+  i18n_diff_check.py                    # 多语言 key 一致性校验
+  i18n_diff_check_enhanced.py           # 增强校验（8+ 规则）
+  gen_trs_files.py                      # 批量生成 TRS
+  trs_safety_manager.py                 # TRS 完整性 + 版本管理
+  encrypt_i18n.c                        # 加解密 CLI
+docs/                                   # 文档
 ```
 
 ## 安装产物布局
@@ -199,22 +224,42 @@ tools/
 |------|------|------|
 | `I18nVaultCore` | 静态库 / 动态库 | i18n 核心库（含 SM4-GCM 加密，由 `BUILD_SHARED_LIBS` 控制） |
 | `i18n_crypto_cli` | 可执行 | JSON/TRS 加解密 CLI |
-| `i18n_test` | 可执行 | 回归测试 |
-| `i18n_keys` | 自定义 | 生成枚举头文件 |
+| `i18n_test` | 可执行 | 测试套件（33 项测试） |
+| `i18n_demo` | 可执行 | 功能演示 |
+| `i18n_compile_time_example` | 可执行 | 编译期 i18n 示例 |
+| `i18n_keys` | 自定义 | 生成 `i18n_keys.h`（JSON 变化时自动重新运行） |
 | `i18n_diff_check` | 自定义 | key 一致性校验 |
 | `i18n_trs` | 自定义 | 构建期 TRS 生成 |
 
 ## 公共 API
 
-| 方法 / 宏 | 说明 |
-|-----------|------|
+### 编译期（零开销）
+
+| API | 说明 |
+|-----|------|
+| `i18n<Key_X, Lang_Y>()` | 编译期翻译（constexpr） |
+| `i18n_fmt(fmt, args...)` | 编译期 key + 运行时不定长格式化 |
+| `I18N_CT_SELECT(key, lang)` | 宏：`i18n<>()` 简写 |
+| `I18N_CT_DEFAULT(key)` | 宏：默认 en_US |
+| `I18N_CT_FMT(key, lang, ...)` | 宏：编译期 key + 运行时格式化 |
+| `I18N_CT_FMT_DEFAULT(key, ...)` | 宏：格式化（默认 en_US） |
+
+### 运行时
+
+| API | 说明 |
+|-----|------|
 | `I18nManager::instance()` | 获取单例 |
 | `reload(path)` | 加载 .json 或 .trs 文件 |
-| `translate(key)` | 普通翻译（args 默认为空） |
+| `translate(key)` | 普通翻译 |
 | `translate(key, {args...})` | 翻译并替换 `{0}` `{1}` 占位符 |
+| `translate<KeyType>({args...})` | 强类型翻译 |
+| `watchFile(path, interval_ms)` | 启动热更新文件监听 |
+| `stopWatching()` | 停止文件监听 |
+| `isWatching()` | 查询监听状态 |
+| `setReloadCallback(cb)` | 注册热更新回调 |
 | `setTrsCryptoConfig({key_hex, aad})` | 设置 TRS 解密参数 |
 | `clearTrsCryptoConfig()` | 清除解密参数 |
-| `I18nVault_TR(key, ...)` | 统一便捷宏：无额外参数为普通翻译，有参数为格式化翻译 |
+| `I18nVault_TR(key, ...)` | 运行时翻译便捷宏 |
 
 ## 配置项
 
@@ -223,6 +268,7 @@ tools/
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `BUILD_SHARED_LIBS` | `OFF` | 设为 `ON` 时将 I18nVaultCore 构建为动态库 |
+| `I18NVAULT_BUILD_EXAMPLES` | `ON` | 设为 `OFF` 跳过构建示例 |
 | `I18N_TRS_KEY_HEX` | `00112233...FF` | 32 hex 字符 SM4 密钥 |
 | `I18N_TRS_AAD` | `i18n:v1` | 附加认证数据 |
 
@@ -252,9 +298,10 @@ tools/
 ## 构建期数据流
 
 ```
-i18n/en_US.json ──→ gen_i18n_keys.py ──→ generated/i18n_keys.h
-i18n/*.json ────→ i18n_diff_check.py ──→ 校验通过 / 报错
-i18n/*.json ────→ gen_trs_files.py ────→ i18n/*.trs
+i18n/*.json ──→ gen_i18n_keys_constexpr.py ──→ generated/i18n_keys.h
+                  (Key_* 结构体、Lang_* 标签、constexpr i18n<> 模板)
+i18n/*.json ──→ i18n_diff_check.py ──────────→ 校验通过 / 报错
+i18n/*.json ──→ gen_trs_files.py ────────────→ i18n/*.trs
 ```
 
 ## CI

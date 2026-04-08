@@ -2,19 +2,19 @@
 
 # I18nVault
 
-A lightweight C++ internationalization library supporting both plain JSON and SM4-GCM encrypted TRS file loading.
+A lightweight C++17 internationalization library with **compile-time i18n** (zero runtime cost) and **runtime hot-reload**.
 
 ## Features
 
-- Fast runtime lookup (enum key → localized string)
-- Formatted translations with `{0}` `{1}` placeholder substitution
-- Dual format: plain JSON and encrypted TRS
-- SM4-GCM authenticated encryption, tamper-proof
-- Build-time i18n key consistency validation across locales
-- Build-time auto-generation of TRS files and enum header
-- pImpl idiom keeps public headers clean
-- CMake install + CPack packaging, supports `find_package(I18nVault)`
-- Cross-platform: Windows / macOS / Linux
+- **Compile-time i18n**: `constexpr` translated strings via `i18n<Key_X, Lang_Y>()` — zero runtime cost
+- **Strong typing**: each key is a unique struct type — compile-time typo detection
+- **Variadic format**: `i18n_fmt()` — compile-time key lookup + runtime `{0}` `{1}` substitution
+- **Runtime hot-reload**: `watchFile()` — poll-based file watcher, auto-reload on change
+- **Dual format**: plain JSON and SM4-GCM encrypted TRS
+- **Build-time code generation**: Python script auto-generates `i18n_keys.h` from JSON
+- **Diff validation**: build-time key consistency validation across locales
+- **CMake install + CPack packaging**, supports `find_package(I18nVault)`
+- **Cross-platform**: Windows / macOS / Linux
 
 ## Quick Start
 
@@ -74,49 +74,74 @@ target_link_libraries(your_target PRIVATE I18nVaultCore)
 
 ## Usage
 
-### Basic Translation
+### Compile-time i18n (Recommended — Zero Runtime Cost)
 
 ```cpp
 #include "i18n_manager.h"
+using namespace I18nVault;
 
-// Get the singleton
+// Direct template call — constexpr, zero overhead
+constexpr auto text = i18n<Key_LOGIN_BUTTON, Lang_en_US>();
+// => "Login"
+
+// Macro shorthand
+constexpr auto menu = I18N_CT_SELECT(MENU_FILE, zh_CN);
+// => "文件"
+
+// Default language (en_US)
+constexpr auto help = I18N_CT_DEFAULT(MENU_HELP);
+// => "Help"
+```
+
+### Compile-time Key + Runtime Format
+
+```cpp
+// Variadic format — key resolved at compile time, only {0} substitution at runtime
+auto msg = I18N_CT_FMT(WELCOME_FMT, en_US, "Alice");
+// => "Welcome, Alice!"
+
+auto msg2 = I18N_CT_FMT(DIALOG_DELETE_FMT, zh_CN, filename);
+// => "删除 photo.jpg？此操作无法撤销。"
+
+// Function call style
+auto msg3 = i18n_fmt(i18n<Key_WELCOME_FMT, Lang_en_US>(), user, count);
+```
+
+### Runtime i18n (Backward Compatible)
+
+```cpp
 auto& mgr = I18nVault::I18nManager::instance();
-
-// Load a JSON locale file
 mgr.reload("i18n/en_US.json");
 
-// Translate using the macro
+// Macro
 std::string text = I18nVault_TR(I18nVault::I18nKey::LOGIN_BUTTON);
 // => "Login"
 
-// Or call the method directly
-std::string text2 = mgr.translate(I18nVault::I18nKey::MENU_FILE);
-// => "File"
-```
-
-### Formatted Translation
-
-Use `{0}` `{1}` placeholders in your JSON:
-
-```json
-{
-  "WELCOME_FMT": "Welcome, {0}!",
-  "dialog": {
-    "delete_fmt": "Delete {0}? This action cannot be undone."
-  }
-}
-```
-
-```cpp
-// Using the macro (recommended)
+// With placeholder substitution
 std::string msg = I18nVault_TR(I18nVault::I18nKey::WELCOME_FMT, "Alice");
 // => "Welcome, Alice!"
 
-std::string msg2 = I18nVault_TR(I18nVault::I18nKey::DIALOG_DELETE_FMT, "photo.jpg");
-// => "Delete photo.jpg? This action cannot be undone."
+// Strong-typed template call
+auto text2 = mgr.translate<Key_LOGIN_BUTTON>();
+```
 
-// Or call the method directly
-std::string msg3 = mgr.translate(I18nVault::I18nKey::WELCOME_FMT, {"Alice"});
+### Runtime Hot-Reload
+
+```cpp
+auto& mgr = I18nVault::I18nManager::instance();
+mgr.reload("i18n/zh_CN.json");
+
+// Optional callback on each reload
+mgr.setReloadCallback([](bool ok, const std::string& path) {
+    std::cout << (ok ? "OK" : "FAIL") << ": " << path << "\n";
+});
+
+// Start watching (default 1000ms poll, or custom)
+mgr.watchFile("i18n/zh_CN.json", 500);
+
+// ... edit zh_CN.json externally → auto-reloaded ...
+
+mgr.stopWatching();  // or auto-stops on destruction
 ```
 
 ### Loading Encrypted TRS Files
@@ -143,34 +168,37 @@ mgr.clearTrsCryptoConfig();
 ## Project Structure
 
 ```
-CMakeLists.txt                  # Top-level: project settings + install + CPack
+CMakeLists.txt                          # Top-level: project settings + install + CPack
 cmake/
-  I18nVaultConfig.cmake.in      # find_package() template
+  I18nVaultConfig.cmake.in              # find_package() template
 src/
-  CMakeLists.txt                # I18nVaultCore library (static/shared)
-  i18n_manager.h                # Public header (pImpl)
-  i18n_manager.cpp              # Implementation
-  crypto/
-    CMakeLists.txt              # SM4-GCM crypto sources (compiled into Core)
-    sm4.c / sm4.h               # SM4 block cipher
-    gcm.c / gcm.h               # GCM mode
-    sm4_gcm.c / sm4_gcm.h       # SM4-GCM unified API
-    hex_utils.c / hex_utils.h   # Hex parsing utilities
-generated/
-  i18n_keys.h                   # Auto-generated enum & mapping functions
+  CMakeLists.txt                        # I18nVaultCore library (static/shared)
+  i18n_manager.h                        # Public header: compile-time + runtime API
+  i18n_manager.cpp                      # Implementation (hot-reload, TRS decryption)
+  crypto/                               # SM4-GCM crypto sources
+generated/  (build output)
+  i18n_keys.h                           # Auto-generated: Key_* structs, Lang_* tags, i18n<> template
 i18n/
-  en_US.json                    # English locale (baseline)
-  zh_CN.json                    # Chinese locale
-  *.trs                         # Encrypted files (build-time generated)
+  en_US.json                            # English locale (baseline)
+  zh_CN.json                            # Chinese locale
+  *.trs                                 # Encrypted files (build-time generated)
 test/
-  CMakeLists.txt                # Tests
-  main.cpp                      # Regression tests
+  CMakeLists.txt                        # Test target
+  main.cpp                              # 33 tests: CT, FMT, runtime, TRS, hot-reload
+examples/
+  CMakeLists.txt                        # Example targets (optional: -DI18NVAULT_BUILD_EXAMPLES=OFF)
+  i18n_demo.cpp                         # Concise feature demo
+  compile_time_i18n_example.cpp         # Detailed compile-time examples
 tools/
-  CMakeLists.txt                # CLI tools + build-time tasks
-  gen_i18n_keys.py              # Generates i18n_keys.h
-  i18n_diff_check.py            # Multi-locale key consistency checker
-  gen_trs_files.py              # Batch TRS generation
-  encrypt_i18n.c                # Encryption/decryption CLI
+  CMakeLists.txt                        # CLI tools + build-time tasks
+  gen_i18n_keys_constexpr.py            # Generates i18n_keys.h with compile-time i18n
+  gen_i18n_keys.py                      # Legacy enum-only generator
+  i18n_diff_check.py                    # Multi-locale key consistency checker
+  i18n_diff_check_enhanced.py           # Enhanced checker (8+ quality rules)
+  gen_trs_files.py                      # Batch TRS generation
+  trs_safety_manager.py                 # TRS integrity + version management
+  encrypt_i18n.c                        # Encryption/decryption CLI
+docs/                                   # Documentation
 ```
 
 ## Install Layout
@@ -199,22 +227,42 @@ tools/
 |--------|------|-------------|
 | `I18nVaultCore` | Static / Shared lib | Core i18n library (with SM4-GCM crypto, controlled by `BUILD_SHARED_LIBS`) |
 | `i18n_crypto_cli` | Executable | JSON/TRS encryption/decryption CLI |
-| `i18n_test` | Executable | Regression tests |
-| `i18n_keys` | Custom | Generates enum header |
+| `i18n_test` | Executable | Test suite (33 tests) |
+| `i18n_demo` | Executable | Feature demo |
+| `i18n_compile_time_example` | Executable | Compile-time i18n examples |
+| `i18n_keys` | Custom | Generates `i18n_keys.h` (auto-runs on JSON change) |
 | `i18n_diff_check` | Custom | Key consistency validation |
 | `i18n_trs` | Custom | Build-time TRS generation |
 
 ## Public API
 
-| Method / Macro | Description |
-|----------------|-------------|
+### Compile-time (Zero Cost)
+
+| API | Description |
+|-----|-------------|
+| `i18n<Key_X, Lang_Y>()` | Compile-time translation (constexpr) |
+| `i18n_fmt(fmt, args...)` | Compile-time key + runtime variadic format |
+| `I18N_CT_SELECT(key, lang)` | Macro shorthand for `i18n<>()` |
+| `I18N_CT_DEFAULT(key)` | Macro shorthand (defaults to en_US) |
+| `I18N_CT_FMT(key, lang, ...)` | Macro: compile-time key + runtime format |
+| `I18N_CT_FMT_DEFAULT(key, ...)` | Macro: format with en_US default |
+
+### Runtime
+
+| API | Description |
+|-----|-------------|
 | `I18nManager::instance()` | Get the singleton |
 | `reload(path)` | Load a .json or .trs file |
-| `translate(key)` | Basic translation (no arguments) |
-| `translate(key, {args...})` | Translate with `{0}` `{1}` placeholder substitution |
+| `translate(key)` | Basic translation |
+| `translate(key, {args...})` | Translate with `{0}` `{1}` substitution |
+| `translate<KeyType>({args...})` | Strong-typed translate |
+| `watchFile(path, interval_ms)` | Start hot-reload file watcher |
+| `stopWatching()` | Stop the file watcher |
+| `isWatching()` | Query watcher status |
+| `setReloadCallback(cb)` | Register hot-reload callback |
 | `setTrsCryptoConfig({key_hex, aad})` | Set TRS decryption parameters |
 | `clearTrsCryptoConfig()` | Clear decryption parameters |
-| `I18nVault_TR(key, ...)` | Convenience macro: plain translation without extra args, formatted translation with args |
+| `I18nVault_TR(key, ...)` | Convenience macro for runtime translate |
 
 ## Configuration
 
@@ -223,6 +271,7 @@ tools/
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `BUILD_SHARED_LIBS` | `OFF` | Set to `ON` to build I18nVaultCore as a shared library |
+| `I18NVAULT_BUILD_EXAMPLES` | `ON` | Set to `OFF` to skip building examples |
 | `I18N_TRS_KEY_HEX` | `00112233...FF` | 32-char hex SM4 key |
 | `I18N_TRS_AAD` | `i18n:v1` | Additional authenticated data |
 
@@ -252,9 +301,10 @@ Prefer injecting via `setTrsCryptoConfig()`. Falls back to environment variables
 ## Build-time Data Flow
 
 ```
-i18n/en_US.json ──→ gen_i18n_keys.py ──→ generated/i18n_keys.h
-i18n/*.json ────→ i18n_diff_check.py ──→ Pass / Fail
-i18n/*.json ────→ gen_trs_files.py ────→ i18n/*.trs
+i18n/*.json ──→ gen_i18n_keys_constexpr.py ──→ generated/i18n_keys.h
+                  (Key_* structs, Lang_* tags, constexpr i18n<> template)
+i18n/*.json ──→ i18n_diff_check.py ──────────→ Pass / Fail
+i18n/*.json ──→ gen_trs_files.py ────────────→ i18n/*.trs
 ```
 
 ## CI

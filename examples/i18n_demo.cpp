@@ -81,14 +81,14 @@ int main()
     std::cout << "   (For dynamic language selection and parameter substitution)\n\n";
 
     // Classic runtime i18n still works
-    auto runtime_text = I18nVault_TR(LOGIN_BUTTON);
+    auto runtime_text = I18nVault_TR(I18nKey::LOGIN_BUTTON);
     std::cout << "   I18nVault_TR(LOGIN_BUTTON): " << runtime_text << "\n";
 
     // With parameter substitution
-    auto welcome_msg = I18nVault_TR(WELCOME_FMT, "Alice");
+    auto welcome_msg = I18nVault_TR(I18nKey::WELCOME_FMT, "Alice");
     std::cout << "   I18nVault_TR(WELCOME_FMT, 'Alice'): " << welcome_msg << "\n";
 
-    auto delete_msg = I18nVault_TR(DIALOG_DELETE_FMT, "important_file.txt");
+    auto delete_msg = I18nVault_TR(I18nKey::DIALOG_DELETE_FMT, "important_file.txt");
     std::cout << "   I18nVault_TR(DIALOG_DELETE_FMT, 'important_file.txt'): "
               << delete_msg << "\n\n";
 
