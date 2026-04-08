@@ -210,6 +210,19 @@ jobs:
           print(f"[OK] shared package verified: {pkg} ({len(names)} entries)")
           PY
 
+      # ── Rename packages for release clarity ──
+      - name: Rename packages
+        shell: bash
+        run: |
+          for f in I18nVault-static-pkg/I18nVault-*.*; do
+            ext="${f##*.}"
+            mv "$f" "I18nVault-static-pkg/I18nVault-static-${{ matrix.os }}.${ext}"
+          done
+          for f in I18nVault-shared-pkg/I18nVault-*.*; do
+            ext="${f##*.}"
+            mv "$f" "I18nVault-shared-pkg/I18nVault-shared-${{ matrix.os }}.${ext}"
+          done
+
       # ── Upload both packages ──
       - name: Upload static package
         uses: actions/upload-artifact@v4
@@ -222,3 +235,28 @@ jobs:
         with:
           name: I18nVault-shared-${{ matrix.os }}
           path: I18nVault-shared-pkg/I18nVault-*.*
+
+  # ══════════════════════════════════════════
+  # Release job — runs only on v* tags
+  # ══════════════════════════════════════════
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: List release assets
+        run: find release-assets -type f | sort
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: release-assets/*
