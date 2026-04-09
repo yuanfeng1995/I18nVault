@@ -43,10 +43,21 @@ def generate_header(json_file: str, output_file: str):
         sys.exit(1)
 
     data = json.loads(json_path.read_text(encoding='utf-8'))
+
+    # _LANGUAGE_NAME is required but excluded from enum generation
+    if "_LANGUAGE_NAME" not in data:
+        print(f"[ERROR] Missing required key '_LANGUAGE_NAME' in {json_file}")
+        sys.exit(1)
+    if not isinstance(data["_LANGUAGE_NAME"], str) or not data["_LANGUAGE_NAME"].strip():
+        print(f"[ERROR] '_LANGUAGE_NAME' must be a non-empty string in {json_file}")
+        sys.exit(1)
+
     flat = flatten_json(data)
 
     normalized_keys = {}
     for k in flat.keys():
+        if k == "_LANGUAGE_NAME":
+            continue
         nk = normalize_key(k)
         if nk in normalized_keys:
             print(f"[ERROR] enum conflict: {k} and {normalized_keys[nk]} both map to {nk}")

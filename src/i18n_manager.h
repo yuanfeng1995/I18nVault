@@ -1,6 +1,5 @@
 #pragma once
 #include "i18n_keys.h"
-#include "i18n_vault_export.h"
 
 #include <functional>
 #include <initializer_list>
@@ -11,7 +10,7 @@
 namespace I18nVault
 {
 
-class I18NVAULT_API I18nManager
+class I18nManager
 {
 public:
     // ---- Public API ----
@@ -22,9 +21,31 @@ public:
         std::string aad;
     };
 
+    struct LanguageInfo
+    {
+        std::string locale;      // e.g. "en_US"
+        std::string displayName; // e.g. "English", "简体中文"
+        std::string filePath;    // e.g. "i18n/en_US.json"
+        std::string fileType;    // "json" or "trs"
+        bool        isActive   = false;
+        bool        isFallback = false;
+    };
+
     using LanguageChangedCallback = std::function<void(const std::string& newLocale)>;
 
     static I18nManager& instance();
+
+    // ---- Directory-based Language Management ----
+
+    /// Set the working directory for translation files and auto-scan/load all
+    /// .json and .trs files found.  When both formats exist for the same locale,
+    /// .trs is preferred if TRS crypto is configured, otherwise .json is used.
+    /// Returns the number of languages successfully loaded, or -1 on error.
+    int setI18nDirectory(const std::string& dir);
+
+    /// Re-read and reload the translation file for a single locale.
+    /// The locale must have been loaded via addLanguage() or setI18nDirectory().
+    bool reloadLanguage(const std::string& locale);
 
     // ---- Language Management ----
 
@@ -49,6 +70,9 @@ public:
 
     /// Get list of all loaded language locales.
     std::vector<std::string> availableLanguages() const;
+
+    /// Get detailed info for all loaded languages (for UI display).
+    std::vector<LanguageInfo> availableLanguageInfos() const;
 
     /// Register a callback invoked when the active language changes.
     /// Returns an ID that can be used to unregister.

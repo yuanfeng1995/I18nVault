@@ -75,8 +75,9 @@ def flatten_json(obj, prefix=""):
 def diff_keys(base, target):
     base_flat = flatten_json(base)
     target_flat = flatten_json(target)
-    base_keys = set(base_flat.keys())
-    target_keys = set(target_flat.keys())
+    # _LANGUAGE_NAME is metadata, not a translation key — exclude from diff
+    base_keys = set(base_flat.keys()) - {REQUIRED_META_KEY}
+    target_keys = set(target_flat.keys()) - {REQUIRED_META_KEY}
 
     missing = base_keys - target_keys     # target 缺少
     extra = target_keys - base_keys       # target 多出
@@ -116,6 +117,32 @@ def write_missing_template(base, target_file, missing_keys):
     return template_path
 
 
+REQUIRED_META_KEY = "_LANGUAGE_NAME"
+
+
+def check_language_name(data, file_path, github_annotations):
+    """Check that the top-level _LANGUAGE_NAME key exists and is a non-empty string."""
+    if REQUIRED_META_KEY not in data:
+        print(f"[ERROR] Missing required key '{REQUIRED_META_KEY}' in {file_path}")
+        emit_github_annotation(
+            "error", file_path, 1,
+            f"Missing required key: {REQUIRED_META_KEY}",
+            github_annotations,
+        )
+        return False
+    val = data[REQUIRED_META_KEY]
+    if not isinstance(val, str) or not val.strip():
+        print(f"[ERROR] '{REQUIRED_META_KEY}' must be a non-empty string in {file_path}")
+        line = find_key_line(file_path, REQUIRED_META_KEY)
+        emit_github_annotation(
+            "error", file_path, line,
+            f"{REQUIRED_META_KEY} must be a non-empty string",
+            github_annotations,
+        )
+        return False
+    return True
+
+
 def check_single_target(base, base_file, target_file, strict_mode, github_annotations):
     target = load_json(target_file)
 
@@ -124,7 +151,11 @@ def check_single_target(base, base_file, target_file, strict_mode, github_annota
 
     has_error = False
 
-    print(f"\n===== i18n Diff Report: {target_file} =====")
+    print(f"\n===== i18n Diff Report: {target_file} =====\n")
+
+    # _LANGUAGE_NAME is mandatory
+    if not check_language_name(target, target_file, github_annotations):
+        has_error = True
 
     # Missing keys always fail.
     if missing:
@@ -211,6 +242,11 @@ def main():
     github_annotations = github_annotations or is_github_actions_env()
 
     base = load_json(base_file)
+
+    # Validate base file has _LANGUAGE_NAME
+    if not check_language_name(base, base_file, github_annotations):
+        print(f"[ERROR] Base file {base_file} is missing '{REQUIRED_META_KEY}'")
+        sys.exit(1)
 
     if not target_files:
         target_files = discover_targets(base_file)

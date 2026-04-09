@@ -10,13 +10,16 @@
 - 格式化翻译，支持 `{0}` `{1}` 占位符替换
 - 支持明文 JSON 与加密 TRS 两种加载格式
 - SM4-GCM 认证加密，防篡改
+- **目录自动扫描**：`setI18nDirectory()` 一键加载整个目录下的翻译文件
+- **热更新**：`reloadLanguage()` 运行时重新读取单个语言文件
+- **TRS/JSON 共存**：同一 locale 两种格式并存时，已配置密钥则优先加载 `.trs`
+- **UI 友好语言列表**：`availableLanguageInfos()` 提供显示名、文件信息及状态
 - **动态语言切换**，支持可选回退语言
 - **语言切换回调**，便于 UI 在语言变更时刷新
-- 构建期自动校验多语言 key 一致性
+- 构建期自动校验多语言 key 一致性（包括 `_LANGUAGE_NAME`）
 - 构建期自动生成 TRS 产物与枚举头文件
 - pImpl 隔离私有实现，公共头文件干净
 - 线程安全：shared_mutex 保护所有状态
-- CMake install + CPack 打包，支持 `find_package(I18nVault)`
 - 跨平台：Windows / macOS / Linux
 
 ## 快速开始
@@ -28,47 +31,15 @@ cmake -S . -B build
 cmake --build build --config Release
 ```
 
-构建动态库（默认静态库）：
-
-```bash
-cmake -S . -B build -DBUILD_SHARED_LIBS=ON
-cmake --build build --config Release
-```
-
 ### 运行测试
 
 ```bash
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-### 安装
-
-```bash
-cmake --install build --config Release --prefix /usr/local
-```
-
-### 打包
-
-```bash
-cd build
-cpack -C Release
-# 输出: I18nVault-1.0.0-<OS>-<Arch>.zip / .tar.gz / .deb
-```
-
 ## 集成到你的项目
 
-### 方式一：CMake find_package
-
-安装后，在你的 `CMakeLists.txt` 中：
-
-```cmake
-find_package(I18nVault REQUIRED)
-target_link_libraries(your_target PRIVATE I18nVault::I18nVaultCore)
-```
-
-### 方式二：add_subdirectory
-
-将 I18nVault 作为子目录添加：
+将 I18nVault 作为子目录添加到你的工程：
 
 ```cmake
 add_subdirectory(third_party/I18nVault)
@@ -103,6 +74,7 @@ JSON 中使用 `{0}` `{1}` 等占位符：
 
 ```json
 {
+  "_LANGUAGE_NAME": "English",
   "WELCOME_FMT": "Welcome, {0}!",
   "dialog": {
     "delete_fmt": "Delete {0}? This action cannot be undone."
@@ -141,6 +113,45 @@ std::string text = I18nVault_TR(I18nVault::I18nKey::LOGIN_BUTTON);
 
 // 不再需要时清除密钥
 mgr.clearTrsCryptoConfig();
+```
+
+### 目录自动扫描
+
+无需逐个加载文件，指定目录即可批量加载：
+
+```cpp
+auto& mgr = I18nVault::I18nManager::instance();
+
+// 可选：先配置 TRS 解密
+mgr.setTrsCryptoConfig({"00112233445566778899AABBCCDDEEFF", "i18n:v1"});
+
+// 自动扫描并加载目录下所有 .json 和 .trs 文件
+// 同一 locale 两种格式同时存在时，已配置密钥则优先使用 .trs
+int loaded = mgr.setI18nDirectory("i18n");
+// loaded == 2 (en_US + zh_CN)
+```
+
+### 热更新
+
+运行时重新读取单个语言文件，无需重启：
+
+```cpp
+// 在磁盘上修改 i18n/en_US.json 后...
+mgr.reloadLanguage("en_US");  // 重新解析并更新内存数据
+```
+
+### UI 友好语言列表
+
+```cpp
+auto infos = mgr.availableLanguageInfos();
+for (const auto& info : infos) {
+    // info.locale      => "en_US"
+    // info.displayName => "English"       （来自 JSON 中的 _LANGUAGE_NAME）
+    // info.fileType    => "json" 或 "trs"
+    // info.isActive    => true/false
+    // info.isFallback  => true/false
+}
+// 直接用 displayName 展示在 UI 语言选择器中
 ```
 
 ### 动态语言切换
@@ -187,11 +198,9 @@ mgr.removeLanguage("zh_CN");
 ## 项目结构
 
 ```
-CMakeLists.txt                  # 顶层：项目设置 + install + CPack
-cmake/
-  I18nVaultConfig.cmake.in      # find_package() 模板
+CMakeLists.txt                  # 顶层：项目设置
 src/
-  CMakeLists.txt                # I18nVaultCore 库（静态/动态）
+  CMakeLists.txt                # I18nVaultCore 静态库
   i18n_manager.h                # 公共头文件（pImpl）
   i18n_manager.cpp              # 实现
   crypto/
@@ -217,31 +226,11 @@ tools/
   encrypt_i18n.c                # 加解密 CLI
 ```
 
-## 安装产物布局
-
-```
-<prefix>/
-  include/I18nVault/
-    i18n_manager.h              # 公共头文件
-    i18n_vault_export.h         # DLL 导出宏（自动生成）
-  share/I18nVault/tools/
-    gen_i18n_keys.py            # key 枚举生成脚本
-  lib/
-    I18nVaultCore.lib           # 核心库（含加密，静态时为完整库，动态时为导入库）
-    cmake/I18nVault/
-      I18nVaultConfig.cmake
-      I18nVaultConfigVersion.cmake
-      I18nVaultTargets.cmake
-  bin/
-    i18n_crypto_cli             # 加解密 CLI 工具
-    I18nVaultCore.dll           # 动态库（仅 BUILD_SHARED_LIBS=ON 时）
-```
-
 ## CMake 目标
 
 | 目标 | 类型 | 说明 |
 |------|------|------|
-| `I18nVaultCore` | 静态库 / 动态库 | i18n 核心库（含 SM4-GCM 加密，由 `BUILD_SHARED_LIBS` 控制） |
+| `I18nVaultCore` | 静态库 | i18n 核心库（含 SM4-GCM 加密） |
 | `i18n_crypto_cli` | 可执行 | JSON/TRS 加解密 CLI |
 | `i18n_test` | 可执行 | 回归测试 |
 | `i18n_keys` | 自定义 | 生成枚举头文件 |
@@ -263,12 +252,15 @@ tools/
 
 | 方法 | 说明 |
 |------|------|
+| `setI18nDirectory(dir)` | 自动扫描目录并加载所有 .json/.trs 文件。返回加载数量，出错返回 -1。 |
+| `reloadLanguage(locale)` | 重新读取并加载单个 locale 的翻译文件。 |
 | `addLanguage(locale, path)` | 加载语言文件并注册。首次调用自动激活。 |
 | `setLanguage(locale)` | 切换活跃语言（必须已加载）。触发回调。 |
 | `currentLanguage()` | 返回当前活跃 locale（未设置时为空）。 |
 | `setFallbackLanguage(locale)` | 设置缺失 key 时使用的回退语言。 |
 | `fallbackLanguage()` | 返回当前回退 locale。 |
 | `availableLanguages()` | 列出所有已加载的 locale 名称。 |
+| `availableLanguageInfos()` | 获取详细信息（displayName, filePath, fileType, isActive, isFallback），用于 UI 展示。 |
 | `removeLanguage(locale)` | 卸载语言（当前活跃语言无法卸载）。 |
 | `onLanguageChanged(callback)` | 注册回调；返回 ID（0 表示失败）。 |
 | `removeLanguageChangedCallback(id)` | 按 ID 注销回调。 |
@@ -286,7 +278,6 @@ tools/
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `BUILD_SHARED_LIBS` | `OFF` | 设为 `ON` 时将 I18nVaultCore 构建为动态库 |
 | `I18N_TRS_KEY_HEX` | `00112233...FF` | 32 hex 字符 SM4 密钥 |
 | `I18N_TRS_AAD` | `i18n:v1` | 附加认证数据 |
 
@@ -299,12 +290,32 @@ tools/
 | `I18N_TRS_KEY_HEX` / `I18N_SM4_KEY_HEX` | SM4 密钥 |
 | `I18N_TRS_AAD` | AAD |
 
+## JSON 文件格式
+
+每个翻译文件**必须**包含顶层 `_LANGUAGE_NAME` 键，值为该语言的原生显示名称：
+
+```json
+{
+  "_LANGUAGE_NAME": "简体中文",
+  "LOGIN_BUTTON": "登录",
+  "WELCOME_FMT": "欢迎, {0}!",
+  "menu": {
+    "file": "文件"
+  }
+}
+```
+
+- `_LANGUAGE_NAME` 是**必填项** — 缺少该键的文件在构建期会校验失败，运行时 `addLanguage()` 也会拒绝加载。
+- `_LANGUAGE_NAME` 仅作为元数据 — **不会**被纳入生成的枚举（`i18n_keys.h`）。
+- 该值用作 `availableLanguageInfos()` 中的 `displayName`，可直接用于 UI 展示。
+
 ## 添加新语言
 
 1. 复制 `i18n/en_US.json` 为 `i18n/<locale>.json`
-2. 翻译所有值（保持 key 结构不变）
-3. 构建时 `i18n_diff_check` 自动校验 key 完整性
-4. 构建时自动生成对应 `.trs` 加密文件
+2. 设置 `_LANGUAGE_NAME` 为该语言的原生名称（如 `"繁體中文"`、`"Français"`）
+3. 翻译所有值（保持 key 结构不变）
+4. 构建时 `i18n_diff_check` 自动校验 key 完整性和 `_LANGUAGE_NAME`
+5. 构建时自动生成对应 `.trs` 加密文件
 
 ## 添加新 Key
 
@@ -330,9 +341,8 @@ GitHub Actions 跨平台矩阵（Ubuntu / macOS / Windows），自动执行：
 3. CTest 测试
 4. TRS 产物验证
 5. SM4-GCM 加解密 roundtrip 验证
-6. cmake install 产物验证
-7. CPack 打包
-8. 上传打包产物为 Actions artifact
+6. 源码包打包（tar.gz + zip）
+7. `v*` 标签推送时发布 GitHub Release
 
 ## License
 
@@ -353,6 +363,8 @@ CI 工作流位于 .github/workflows/ci.yml，采用矩阵执行：
 3. CTest 冒烟测试
 4. TRS 产物存在性检查
 5. 基于构建产出的 TRS 做解密回环校验
+6. 源码包打包（`git archive` → tar.gz + zip）
+7. `v*` 标签推送时，发布源码包到 GitHub Release
 
 ## 相关文档
 

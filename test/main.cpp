@@ -129,6 +129,21 @@ int main()
         return 1;
     }
 
+    // ---- Missing _LANGUAGE_NAME validation ----
+    {
+        // Write a file with all translation keys but without _LANGUAGE_NAME
+        constexpr const char* kTmpNoNameJson = "build/tmp/no_name.json";
+        std::ofstream         out(kTmpNoNameJson, std::ios::binary);
+        out << R"({"LOGIN_BUTTON":"X","WELCOME_FMT":"{0}","menu":{"file":"F","edit":"E","help":"H"},"dialog":{"confirm":"Y","delete_fmt":"{0}"}})";
+        out.close();
+        if (mgr.addLanguage("no_name", kTmpNoNameJson))
+        {
+            std::cerr << "[FAIL] json without _LANGUAGE_NAME should fail validation" << std::endl;
+            return 1;
+        }
+        fs::remove(kTmpNoNameJson);
+    }
+
     // ---- TRS encrypted file tests ----
     const std::string key_hex = "00112233445566778899AABBCCDDEEFF";
     const std::string aad     = "i18n:v1";
@@ -354,6 +369,165 @@ int main()
     {
         std::cerr << "[FAIL] currentLanguage changed unexpectedly after re-addLanguage" << std::endl;
         return 1;
+    }
+
+    // ---- setI18nDirectory Tests ----
+
+    // Switch back to en_US so we start clean
+    if (!mgr.setLanguage("en_US"))
+    {
+        std::cerr << "[FAIL] setLanguage en_US before directory test failed" << std::endl;
+        return 1;
+    }
+    // Remove all languages and re-load via directory scan
+    mgr.removeLanguage("zh_CN");
+
+    // Create a fresh manager-like state: remove en_US too (need to clear current first)
+    // Instead, just test setI18nDirectory on a second manager instance is not possible (singleton).
+    // Test: setI18nDirectory loads files from the i18n/ directory
+    {
+        // Remove en_US by switching away first
+        // Re-add both via directory
+        mgr.removeLanguage("en_US");  // will fail since it's current — that's OK
+
+        // setI18nDirectory on non-existent dir must return -1
+        int bad = mgr.setI18nDirectory("non_existent_directory_xyz");
+        if (bad != -1)
+        {
+            std::cerr << "[FAIL] setI18nDirectory on bad dir should return -1, got: " << bad << std::endl;
+            return 1;
+        }
+
+        // setI18nDirectory on the i18n/ directory
+        int count = mgr.setI18nDirectory("i18n");
+        if (count < 2)
+        {
+            std::cerr << "[FAIL] setI18nDirectory should load at least 2 languages, got: " << count << std::endl;
+            return 1;
+        }
+
+        auto langs = mgr.availableLanguages();
+        bool has_en = std::find(langs.begin(), langs.end(), "en_US") != langs.end();
+        bool has_zh = std::find(langs.begin(), langs.end(), "zh_CN") != langs.end();
+        if (!has_en || !has_zh)
+        {
+            std::cerr << "[FAIL] setI18nDirectory did not load en_US and zh_CN" << std::endl;
+            return 1;
+        }
+    }
+
+    // ---- reloadLanguage Tests ----
+    {
+        if (!mgr.setLanguage("en_US"))
+        {
+            std::cerr << "[FAIL] setLanguage en_US before reload test failed" << std::endl;
+            return 1;
+        }
+
+        // Register callback to verify reload of active language fires notification
+        std::string reload_cb_locale;
+        size_t reload_cb_id = mgr.onLanguageChanged(
+            [&reload_cb_locale](const std::string& locale) { reload_cb_locale = locale; });
+
+        // reloadLanguage should succeed for a loaded locale
+        if (!mgr.reloadLanguage("en_US"))
+        {
+            std::cerr << "[FAIL] reloadLanguage en_US failed" << std::endl;
+            return 1;
+        }
+        // Callback must fire when reloading the active language
+        if (reload_cb_locale != "en_US")
+        {
+            std::cerr << "[FAIL] reloadLanguage of active locale should fire callback, got: '"
+                      << reload_cb_locale << "'" << std::endl;
+            return 1;
+        }
+
+        // Reload a non-active language should NOT fire callback
+        reload_cb_locale.clear();
+        if (!mgr.reloadLanguage("zh_CN"))
+        {
+            std::cerr << "[FAIL] reloadLanguage zh_CN failed" << std::endl;
+            return 1;
+        }
+        if (!reload_cb_locale.empty())
+        {
+            std::cerr << "[FAIL] reloadLanguage of non-active locale should not fire callback" << std::endl;
+            return 1;
+        }
+
+        mgr.removeLanguageChangedCallback(reload_cb_id);
+
+        // Translation should still work after reload
+        if (mgr.translate(I18nVault::I18nKey::LOGIN_BUTTON) != "Login")
+        {
+            std::cerr << "[FAIL] LOGIN_BUTTON mismatch after reloadLanguage" << std::endl;
+            return 1;
+        }
+
+        // reloadLanguage on unknown locale must fail
+        if (mgr.reloadLanguage("fr_FR"))
+        {
+            std::cerr << "[FAIL] reloadLanguage unknown locale should fail" << std::endl;
+            return 1;
+        }
+    }
+
+    // ---- availableLanguageInfos Tests ----
+    {
+        auto infos = mgr.availableLanguageInfos();
+        if (infos.size() < 2)
+        {
+            std::cerr << "[FAIL] availableLanguageInfos should have at least 2 entries, got: " << infos.size()
+                      << std::endl;
+            return 1;
+        }
+
+        bool foundActiveEn = false;
+        bool foundZhName   = false;
+        for (const auto& info : infos)
+        {
+            if (info.locale == "en_US")
+            {
+                foundActiveEn = info.isActive;
+                if (info.displayName != "English")
+                {
+                    std::cerr << "[FAIL] en_US displayName should be 'English', got: " << info.displayName
+                              << std::endl;
+                    return 1;
+                }
+                if (info.fileType != "json")
+                {
+                    std::cerr << "[FAIL] en_US fileType should be 'json', got: " << info.fileType << std::endl;
+                    return 1;
+                }
+                if (info.filePath.empty())
+                {
+                    std::cerr << "[FAIL] en_US filePath should not be empty" << std::endl;
+                    return 1;
+                }
+            }
+            if (info.locale == "zh_CN")
+            {
+                foundZhName = (info.displayName == "\xe7\xae\x80\xe4\xbd\x93\xe4\xb8\xad\xe6\x96\x87");
+                if (!foundZhName)
+                {
+                    std::cerr << "[FAIL] zh_CN displayName should be '\xe7\xae\x80\xe4\xbd\x93\xe4\xb8\xad\xe6\x96\x87', got: " << info.displayName
+                              << std::endl;
+                    return 1;
+                }
+            }
+        }
+        if (!foundActiveEn)
+        {
+            std::cerr << "[FAIL] en_US should be marked isActive in availableLanguageInfos" << std::endl;
+            return 1;
+        }
+        if (!foundZhName)
+        {
+            std::cerr << "[FAIL] zh_CN displayName not found in availableLanguageInfos" << std::endl;
+            return 1;
+        }
     }
 
     std::cout << "[OK] all i18n manager tests passed" << std::endl;

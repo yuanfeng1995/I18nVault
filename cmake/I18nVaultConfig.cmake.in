@@ -1,4 +1,0 @@
-@PACKAGE_INIT@
-
-include("${CMAKE_CURRENT_LIST_DIR}/I18nVaultTargets.cmake")
-check_required_components(I18nVault)

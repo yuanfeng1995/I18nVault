@@ -10,13 +10,16 @@ A lightweight C++ internationalization library supporting both plain JSON and SM
 - Formatted translations with `{0}` `{1}` placeholder substitution
 - Dual format: plain JSON and encrypted TRS
 - SM4-GCM authenticated encryption, tamper-proof
+- **Directory auto-scan**: `setI18nDirectory()` loads all translations from a folder
+- **Hot-reload**: `reloadLanguage()` re-reads a single locale file at runtime
+- **TRS/JSON coexistence**: when both formats exist, `.trs` is preferred if crypto is configured
+- **UI-friendly language list**: `availableLanguageInfos()` provides display names, file info, and active state
 - **Dynamic language switching** with optional fallback locale
 - **Language change callbacks** for UI refresh on locale switch
-- Build-time i18n key consistency validation across locales
+- Build-time i18n key consistency validation across locales (including `_LANGUAGE_NAME`)
 - Build-time auto-generation of TRS files and enum header
 - pImpl idiom keeps public headers clean
 - Thread-safe: shared_mutex protects all state
-- CMake install + CPack packaging, supports `find_package(I18nVault)`
 - Cross-platform: Windows / macOS / Linux
 
 ## Quick Start
@@ -28,47 +31,15 @@ cmake -S . -B build
 cmake --build build --config Release
 ```
 
-Build as shared library (default is static):
-
-```bash
-cmake -S . -B build -DBUILD_SHARED_LIBS=ON
-cmake --build build --config Release
-```
-
 ### Run Tests
 
 ```bash
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-### Install
-
-```bash
-cmake --install build --config Release --prefix /usr/local
-```
-
-### Package
-
-```bash
-cd build
-cpack -C Release
-# Output: I18nVault-1.0.0-<OS>-<Arch>.zip / .tar.gz / .deb
-```
-
 ## Integration
 
-### Option 1: CMake find_package
-
-After installing, add to your `CMakeLists.txt`:
-
-```cmake
-find_package(I18nVault REQUIRED)
-target_link_libraries(your_target PRIVATE I18nVault::I18nVaultCore)
-```
-
-### Option 2: add_subdirectory
-
-Add I18nVault as a subdirectory:
+Add I18nVault as a subdirectory in your project:
 
 ```cmake
 add_subdirectory(third_party/I18nVault)
@@ -103,6 +74,7 @@ Use `{0}` `{1}` placeholders in your JSON:
 
 ```json
 {
+  "_LANGUAGE_NAME": "English",
   "WELCOME_FMT": "Welcome, {0}!",
   "dialog": {
     "delete_fmt": "Delete {0}? This action cannot be undone."
@@ -141,6 +113,45 @@ std::string text = I18nVault_TR(I18nVault::I18nKey::LOGIN_BUTTON);
 
 // Clear key material when no longer needed
 mgr.clearTrsCryptoConfig();
+```
+
+### Directory Auto-Scan
+
+Instead of loading files one by one, point to a directory and load all translations at once:
+
+```cpp
+auto& mgr = I18nVault::I18nManager::instance();
+
+// Optionally configure TRS decryption first
+mgr.setTrsCryptoConfig({"00112233445566778899AABBCCDDEEFF", "i18n:v1"});
+
+// Auto-scan: loads all .json and .trs files from the directory.
+// When both en_US.json and en_US.trs exist, .trs is preferred if crypto is configured.
+int loaded = mgr.setI18nDirectory("i18n");
+// loaded == 2 (en_US + zh_CN)
+```
+
+### Hot-Reload
+
+Re-read a single translation file at runtime without restarting:
+
+```cpp
+// After editing i18n/en_US.json on disk...
+mgr.reloadLanguage("en_US");  // re-parses and updates in-memory data
+```
+
+### UI-Friendly Language List
+
+```cpp
+auto infos = mgr.availableLanguageInfos();
+for (const auto& info : infos) {
+    // info.locale      => "en_US"
+    // info.displayName => "English"       (from _LANGUAGE_NAME in JSON)
+    // info.fileType    => "json" or "trs"
+    // info.isActive    => true/false
+    // info.isFallback  => true/false
+}
+// Use displayName directly in your UI language selector.
 ```
 
 ### Dynamic Language Switching
@@ -187,11 +198,9 @@ mgr.removeLanguage("zh_CN");
 ## Project Structure
 
 ```
-CMakeLists.txt                  # Top-level: project settings + install + CPack
-cmake/
-  I18nVaultConfig.cmake.in      # find_package() template
+CMakeLists.txt                  # Top-level: project settings
 src/
-  CMakeLists.txt                # I18nVaultCore library (static/shared)
+  CMakeLists.txt                # I18nVaultCore static library
   i18n_manager.h                # Public header (pImpl)
   i18n_manager.cpp              # Implementation
   crypto/
@@ -217,31 +226,11 @@ tools/
   encrypt_i18n.c                # Encryption/decryption CLI
 ```
 
-## Install Layout
-
-```
-<prefix>/
-  include/I18nVault/
-    i18n_manager.h              # Public header
-    i18n_vault_export.h         # DLL export macros (auto-generated)
-  share/I18nVault/tools/
-    gen_i18n_keys.py            # Key enum generation script
-  lib/
-    I18nVaultCore.lib           # Core library (with crypto; static = full lib, shared = import lib)
-    cmake/I18nVault/
-      I18nVaultConfig.cmake
-      I18nVaultConfigVersion.cmake
-      I18nVaultTargets.cmake
-  bin/
-    i18n_crypto_cli             # Encryption/decryption CLI tool
-    I18nVaultCore.dll           # Shared library (BUILD_SHARED_LIBS=ON only)
-```
-
 ## CMake Targets
 
 | Target | Type | Description |
 |--------|------|-------------|
-| `I18nVaultCore` | Static / Shared lib | Core i18n library (with SM4-GCM crypto, controlled by `BUILD_SHARED_LIBS`) |
+| `I18nVaultCore` | Static lib | Core i18n library (with SM4-GCM crypto) |
 | `i18n_crypto_cli` | Executable | JSON/TRS encryption/decryption CLI |
 | `i18n_test` | Executable | Regression tests |
 | `i18n_keys` | Custom | Generates enum header |
@@ -263,12 +252,15 @@ tools/
 
 | Method | Description |
 |--------|-------------|
+| `setI18nDirectory(dir)` | Auto-scan a directory and load all .json/.trs files. Returns count loaded, or -1 on error. |
+| `reloadLanguage(locale)` | Re-read and reload a single locale's translation file. |
 | `addLanguage(locale, path)` | Load a locale file (.json/.trs) and register it. First call auto-activates. |
 | `setLanguage(locale)` | Switch active locale (must be previously loaded). Fires callbacks. |
 | `currentLanguage()` | Return the active locale string (empty if none). |
 | `setFallbackLanguage(locale)` | Set fallback locale for missing keys. |
 | `fallbackLanguage()` | Return the current fallback locale string. |
 | `availableLanguages()` | List all loaded locale names. |
+| `availableLanguageInfos()` | Get detailed info (displayName, filePath, fileType, isActive, isFallback) for UI. |
 | `removeLanguage(locale)` | Unload a locale (fails if it is currently active). |
 | `onLanguageChanged(callback)` | Register a callback; returns an ID (0 means failure). |
 | `removeLanguageChangedCallback(id)` | Unregister a callback by ID. |
@@ -286,7 +278,6 @@ tools/
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `BUILD_SHARED_LIBS` | `OFF` | Set to `ON` to build I18nVaultCore as a shared library |
 | `I18N_TRS_KEY_HEX` | `00112233...FF` | 32-char hex SM4 key |
 | `I18N_TRS_AAD` | `i18n:v1` | Additional authenticated data |
 
@@ -299,12 +290,32 @@ Prefer injecting via `setTrsCryptoConfig()`. Falls back to environment variables
 | `I18N_TRS_KEY_HEX` / `I18N_SM4_KEY_HEX` | SM4 key |
 | `I18N_TRS_AAD` | AAD |
 
+## JSON File Format
+
+Every translation file **must** contain a top-level `_LANGUAGE_NAME` key with the language's native display name:
+
+```json
+{
+  "_LANGUAGE_NAME": "English",
+  "LOGIN_BUTTON": "Login",
+  "WELCOME_FMT": "Welcome, {0}!",
+  "menu": {
+    "file": "File"
+  }
+}
+```
+
+- `_LANGUAGE_NAME` is **required** — files without it will fail validation at build time and be rejected by `addLanguage()` at runtime.
+- `_LANGUAGE_NAME` is metadata only — it is **not** included in the generated enum (`i18n_keys.h`).
+- The value is used as `displayName` in `availableLanguageInfos()` for UI display.
+
 ## Adding a New Locale
 
 1. Copy `i18n/en_US.json` to `i18n/<locale>.json`
-2. Translate all values (keep key structure unchanged)
-3. `i18n_diff_check` automatically validates key completeness at build time
-4. Corresponding `.trs` encrypted file is auto-generated during build
+2. Set `_LANGUAGE_NAME` to the native display name (e.g. `"繁體中文"`, `"Français"`)
+3. Translate all values (keep key structure unchanged)
+4. `i18n_diff_check` automatically validates key completeness and `_LANGUAGE_NAME` at build time
+5. Corresponding `.trs` encrypted file is auto-generated during build
 
 ## Adding a New Key
 
@@ -330,9 +341,8 @@ GitHub Actions cross-platform matrix (Ubuntu / macOS / Windows), automatically r
 3. CTest tests
 4. TRS artifact verification
 5. SM4-GCM encrypt/decrypt roundtrip verification
-6. cmake install artifact verification
-7. CPack packaging
-8. Upload packages as Actions artifacts
+6. Source archive packaging (tar.gz + zip)
+7. GitHub Release publishing on `v*` tags
 
 ## License
 
@@ -353,6 +363,8 @@ Pipeline includes:
 3. CTest smoke tests
 4. TRS artifact existence check
 5. Decrypt roundtrip verification using build-produced TRS
+6. Source archive packaging (`git archive` → tar.gz + zip)
+7. On `v*` tag push, publish source archives to GitHub Release
 
 ## Related Documentation
 

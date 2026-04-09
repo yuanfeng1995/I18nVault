@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <mutex>
@@ -25,6 +26,7 @@ namespace
 constexpr const char* kTrsMagic    = "TRS1";
 constexpr uint8_t     kTrsVersion  = 1;
 constexpr uint8_t     kTrsReserved = 0;
+constexpr const char* kLangNameKey = "_LANGUAGE_NAME";
 
 bool ends_with(const std::string& value, const std::string& suffix)
 {
@@ -219,6 +221,12 @@ bool parse_json_file(const std::string& path, nlohmann::json& j, const std::opti
 
 bool validate_required_keys(const std::unordered_map<std::string, std::string>& data)
 {
+    if (data.find(kLangNameKey) == data.end())
+    {
+        std::cerr << "Missing required key: " << kLangNameKey
+                  << " (every translation file must contain \"_LANGUAGE_NAME\")" << std::endl;
+        return false;
+    }
     for (const auto& key : get_required_keys())
     {
         if (data.find(key) == data.end())
@@ -242,9 +250,9 @@ struct I18nManager::Impl
     mutable std::shared_mutex mu;
 
     // Multi-language storage: locale -> translations
-    std::unordered_map<std::string, LangData> languages;
-    std::string                               currentLocale;
-    std::string                               fallbackLocale;
+    std::map<std::string, LangData> languages;
+    std::string                     currentLocale;
+    std::string                     fallbackLocale;
 
     // Language change callbacks
     std::vector<std::pair<size_t, I18nManager::LanguageChangedCallback>> callbacks;
@@ -252,6 +260,10 @@ struct I18nManager::Impl
 
     std::optional<std::vector<uint8_t>> trs_key;
     std::string                         trs_aad;
+
+    // Directory scanning state
+    std::string                                  i18nDir;
+    std::unordered_map<std::string, std::string> localePaths;  // locale -> file path
 
     // Lookup a key in a specific locale's data. Caller must hold at least shared lock.
     const LangData* findLang(const std::string& locale) const
@@ -375,7 +387,8 @@ bool I18nManager::addLanguage(const std::string& locale, const std::string& path
 
     {
         std::unique_lock lock(pImpl_->mu);
-        pImpl_->languages[locale] = std::move(new_data);
+        pImpl_->languages[locale]   = std::move(new_data);
+        pImpl_->localePaths[locale] = path;
 
         // If this is the first language loaded, make it active automatically
         if (pImpl_->currentLocale.empty())
@@ -397,6 +410,7 @@ bool I18nManager::removeLanguage(const std::string& locale)
     if (locale == pImpl_->fallbackLocale)
         pImpl_->fallbackLocale.clear();
 
+    pImpl_->localePaths.erase(locale);
     return pImpl_->languages.erase(locale) > 0;
 }
 
@@ -502,6 +516,205 @@ void I18nManager::removeLanguageChangedCallback(size_t id)
     std::unique_lock lock(pImpl_->mu);
     auto&            cbs = pImpl_->callbacks;
     cbs.erase(std::remove_if(cbs.begin(), cbs.end(), [id](const auto& p) { return p.first == id; }), cbs.end());
+}
+
+// ---- Directory Scanning & Hot-Reload ----
+
+int I18nManager::setI18nDirectory(const std::string& dir)
+{
+    namespace fs = std::filesystem;
+
+    std::error_code ec;
+    if (!fs::is_directory(dir, ec))
+    {
+        std::cerr << "I18n directory does not exist: " << dir << std::endl;
+        return -1;
+    }
+
+    bool hasTrsCrypto;
+    {
+        std::shared_lock lock(pImpl_->mu);
+        hasTrsCrypto = pImpl_->trs_key.has_value();
+    }
+
+    // Collect candidate files: locale -> {json_path, trs_path}
+    struct FilePair
+    {
+        std::string jsonPath;
+        std::string trsPath;
+    };
+    std::unordered_map<std::string, FilePair> candidates;
+
+    for (const auto& entry : fs::directory_iterator(dir, ec))
+    {
+        if (!entry.is_regular_file(ec))
+            continue;
+
+        const auto ext  = entry.path().extension().string();
+        const auto stem = entry.path().stem().string();
+        const auto full = entry.path().string();
+
+        if (ext == ".json")
+            candidates[stem].jsonPath = full;
+        else if (ext == ".trs")
+            candidates[stem].trsPath = full;
+    }
+
+    // For each locale, pick the best file (Feature 3: trs preferred when crypto configured)
+    int loaded = 0;
+    for (const auto& [locale, pair] : candidates)
+    {
+        std::string chosen;
+        if (!pair.trsPath.empty() && hasTrsCrypto)
+            chosen = pair.trsPath;
+        else if (!pair.jsonPath.empty())
+            chosen = pair.jsonPath;
+        else if (!pair.trsPath.empty())
+            chosen = pair.trsPath;  // only trs available, try anyway
+        else
+            continue;
+
+        if (addLanguage(locale, chosen))
+            ++loaded;
+    }
+
+    {
+        std::unique_lock lock(pImpl_->mu);
+        pImpl_->i18nDir = dir;
+    }
+
+    return loaded;
+}
+
+bool I18nManager::reloadLanguage(const std::string& locale)
+{
+    std::string path;
+    {
+        std::shared_lock lock(pImpl_->mu);
+        auto             it = pImpl_->localePaths.find(locale);
+        if (it == pImpl_->localePaths.end())
+        {
+            std::cerr << "Cannot reload: locale '" << locale << "' has no known file path." << std::endl;
+            return false;
+        }
+        path = it->second;
+    }
+
+    // Re-parse the file
+    nlohmann::json j;
+    try
+    {
+        std::optional<std::vector<uint8_t>> key;
+        std::string                         aad;
+        {
+            std::shared_lock lock(pImpl_->mu);
+            key = pImpl_->trs_key;
+            aad = pImpl_->trs_aad;
+        }
+
+        if (!parse_json_file(path, j, key, aad))
+            return false;
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Failed to reload i18n file " << path << ": " << e.what() << std::endl;
+        return false;
+    }
+
+    std::unordered_map<std::string, std::string> new_data;
+    flatten(j, "", new_data);
+
+    if (!validate_required_keys(new_data))
+        return false;
+
+    std::vector<std::pair<size_t, LanguageChangedCallback>> cbs;
+    {
+        std::unique_lock lock(pImpl_->mu);
+        pImpl_->languages[locale] = std::move(new_data);
+
+        // If reloading the active language, notify listeners so UI can refresh
+        if (locale == pImpl_->currentLocale)
+            cbs = pImpl_->callbacks;
+    }
+
+    for (const auto& [id, cb] : cbs)
+    {
+        if (cb)
+        {
+            try
+            {
+                cb(locale);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "Language change callback (id=" << id << ") threw: " << e.what() << std::endl;
+            }
+            catch (...)
+            {
+                std::cerr << "Language change callback (id=" << id << ") threw unknown exception." << std::endl;
+            }
+        }
+    }
+    return true;
+}
+
+std::vector<I18nManager::LanguageInfo> I18nManager::availableLanguageInfos() const
+{
+    // Built-in fallback: locale code -> native display name
+    static const std::unordered_map<std::string, std::string> kLocaleDisplayNames = {
+        {"en_US", "English"},
+        {"en_GB", "English (UK)"},
+        {"zh_CN", "\xe7\xae\x80\xe4\xbd\x93\xe4\xb8\xad\xe6\x96\x87"},
+        {"zh_TW", "\xe7\xb9\x81\xe9\xab\x94\xe4\xb8\xad\xe6\x96\x87"},
+        {"zh_HK", "\xe7\xb9\x81\xe9\xab\x94\xe4\xb8\xad\xe6\x96\x87(\xe9\xa6\x99\xe6\xb8\xaf)"},
+        {"ja_JP", "\xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e"},
+        {"ko_KR", "\xed\x95\x9c\xea\xb5\xad\xec\x96\xb4"},
+        {"fr_FR", "Fran\xc3\xa7""ais"},
+        {"de_DE", "Deutsch"},
+        {"es_ES", "Espa\xc3\xb1ol"},
+        {"pt_BR", "Portugu\xc3\xaas"},
+        {"ru_RU", "\xd0\xa0\xd1\x83\xd1\x81\xd1\x81\xd0\xba\xd0\xb8\xd0\xb9"},
+        {"it_IT", "Italiano"},
+        {"ar_SA", "\xd8\xa7\xd9\x84\xd8\xb9\xd8\xb1\xd8\xa8\xd9\x8a\xd8\xa9"},
+        {"th_TH", "\xe0\xb9\x84\xe0\xb8\x97\xe0\xb8\xa2"},
+        {"vi_VN", "Ti\xe1\xba\xbfng Vi\xe1\xbb\x87t"},
+    };
+
+    std::shared_lock          lock(pImpl_->mu);
+    std::vector<LanguageInfo> result;
+    result.reserve(pImpl_->languages.size());
+    for (const auto& [locale, data] : pImpl_->languages)
+    {
+        LanguageInfo info;
+        info.locale     = locale;
+        info.isActive   = (locale == pImpl_->currentLocale);
+        info.isFallback = (locale == pImpl_->fallbackLocale);
+
+        // Display name: prefer _LANGUAGE_NAME from translation data
+        auto nameIt = data.find(kLangNameKey);
+        if (nameIt != data.end())
+        {
+            info.displayName = nameIt->second;
+        }
+        else
+        {
+            auto fallback    = kLocaleDisplayNames.find(locale);
+            info.displayName = (fallback != kLocaleDisplayNames.end()) ? fallback->second : locale;
+        }
+
+        auto pathIt = pImpl_->localePaths.find(locale);
+        if (pathIt != pImpl_->localePaths.end())
+        {
+            info.filePath = pathIt->second;
+            if (ends_with(info.filePath, ".trs"))
+                info.fileType = "trs";
+            else
+                info.fileType = "json";
+        }
+
+        result.push_back(std::move(info));
+    }
+    return result;
 }
 
 }  // namespace I18nVault
